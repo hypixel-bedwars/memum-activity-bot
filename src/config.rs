@@ -49,7 +49,7 @@ impl AppConfig {
                 .expect("HYPIXEL_API_KEY must be set in .env"),
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:bot.db".to_string()),
             sweep_interval_seconds: env::var("SWEEP_INTERVAL_SECONDS")
-                .unwrap_or_else(|_| "30".to_string())
+                .unwrap_or_else(|_| "300".to_string())
                 .parse()
                 .expect("SWEEP_INTERVAL_SECONDS must be a valid u64"),
             base_level_xp: env::var("BASE_LEVEL_XP")
