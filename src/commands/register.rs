@@ -131,8 +131,23 @@ pub async fn register(
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "unknown".to_string());
 
-    let db_user =
-        queries::register_user(&data.db, discord_user_id, &profile.id, guild_id_i64, &now).await?;
+    let db_user = queries::register_user(&data.db, discord_user_id, &profile.id, guild_id_i64, &now).await?;
+
+    // fetch the base stats for the user
+    // and store the initial values in the database so we have a baseline for future comparisons.
+    
+    let bw = &player_data.bedwars;
+
+    for (stat_name, value) in &bw.stats {
+        queries::insert_hypixel_snapshot(
+            &data.db,
+            db_user.id,
+            stat_name,
+            *value,
+            &now,
+        )
+        .await?;
+    }
 
     ctx.say(format!(
 		 "You have been registered as **{}** (UUID `{}`). You can now start earning XP and tracking your stats!",

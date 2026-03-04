@@ -78,6 +78,12 @@ async fn sweep_user(
     for (stat_name, &new_value) in &stats.stats {
         let previous = queries::get_latest_hypixel_snapshot(pool, user.id, stat_name).await?;
 
+        // If no previous snapshot exists, create a baseline snapshot and skip XP
+        if previous.is_none() {
+            queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, &now).await?;
+            continue;
+        }
+
         let old_value = previous.as_ref().map(|s| s.stat_value).unwrap_or(0.0);
 
         // Always store a new snapshot (even if the value hasn't changed, so we
