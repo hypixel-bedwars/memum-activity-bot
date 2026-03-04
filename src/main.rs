@@ -1,3 +1,68 @@
-fn main() {
-    println!("Hello, world!");
+// This is a skeleton project — many public items exist for extensibility but
+// are not yet consumed within the crate itself.
+#![allow(dead_code)]
+
+//! Entry point for the memum-activity-bot.
+//!
+//! Responsibilities (in order):
+//! 1. Load environment variables from `.env`.
+//! 2. Initialize structured logging via `tracing`.
+//! 3. Parse application configuration.
+//! 4. Initialize the SQLite database and run migrations.
+//! 5. Build the Poise framework (commands, event handler, sweeper).
+//! 6. Start the Discord gateway client.
+
+mod bot;
+mod commands;
+mod config;
+mod database;
+mod discord_stats;
+mod hypixel;
+mod points;
+mod shared;
+mod sweeper;
+
+use poise::serenity_prelude as serenity;
+use tracing::info;
+use tracing_subscriber::EnvFilter;
+
+use config::AppConfig;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // 1. Load .env file (silently ignore if missing — variables may be set
+    //    directly in the environment).
+    let _ = dotenv::dotenv();
+
+    // 2. Initialize tracing. The RUST_LOG env var controls filtering; default
+    //    to `info` for the bot crate and `warn` for everything else.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("memum_activity_bot=info,warn")),
+        )
+        .init();
+
+    info!("Starting memum-activity-bot...");
+
+    // 3. Parse configuration from environment.
+    let config = AppConfig::from_env();
+    let token = config.discord_token.clone();
+
+    // 4. Initialize the database.
+    let db = database::init_db(&config.database_url).await?;
+    info!("Database initialized.");
+
+    // 5. Build the Poise framework.
+    let framework = bot::build(config, db).await?;
+
+    // 6. Build and start the Serenity client.
+    let mut client = serenity::ClientBuilder::new(&token, bot::intents())
+        .framework(framework)
+        .await?;
+
+    info!("Connecting to Discord...");
+    client.start().await?;
+
+    Ok(())
 }
