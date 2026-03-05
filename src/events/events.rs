@@ -1,7 +1,7 @@
 use poise::serenity_prelude as serenity;
 use tracing::warn;
 
-use crate::commands::register::perform_registration;
+use crate::commands::registration::register::perform_registration;
 use crate::shared::types::{Data, Error};
 
 /// Extract the Minecraft username from a server nickname.
