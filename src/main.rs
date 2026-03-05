@@ -19,6 +19,8 @@ mod database;
 mod discord_stats;
 mod events;
 mod hypixel;
+mod leaderboard_card;
+mod leaderboard_updater;
 mod level_card;
 mod shared;
 mod stats_definitions;

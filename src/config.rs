@@ -44,6 +44,15 @@ pub struct AppConfig {
     /// `/edit-stats` and `/set-register-role`. Parsed from `ADMIN_USER_IDS`
     /// (comma-separated list of snowflake IDs). Empty if the env var is unset.
     pub admin_user_ids: Vec<u64>,
+
+    /// How long leaderboard images are cached before regeneration, in seconds.
+    /// Defaults to 60 if `LEADERBOARD_CACHE_SECONDS` is unset.
+    pub leaderboard_cache_seconds: u64,
+
+    /// Number of players shown in persistent leaderboards. Each page shows 10,
+    /// so this controls how many pages the persistent message cycles through.
+    /// Defaults to 10 if `PERSISTENT_LEADERBOARD_PLAYERS` is unset.
+    pub persistent_leaderboard_players: u64,
 }
 
 impl AppConfig {
@@ -77,6 +86,14 @@ impl AppConfig {
                 .split(',')
                 .filter_map(|s| s.trim().parse::<u64>().ok())
                 .collect(),
+            leaderboard_cache_seconds: env::var("LEADERBOARD_CACHE_SECONDS")
+                .unwrap_or_else(|_| "60".to_string())
+                .parse()
+                .expect("LEADERBOARD_CACHE_SECONDS must be a valid u64"),
+            persistent_leaderboard_players: env::var("PERSISTENT_LEADERBOARD_PLAYERS")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .expect("PERSISTENT_LEADERBOARD_PLAYERS must be a valid u64"),
         }
     }
 }

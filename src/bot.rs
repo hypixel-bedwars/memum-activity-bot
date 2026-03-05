@@ -2,7 +2,7 @@
 ///
 /// Configures and builds the Poise framework, registers commands, sets up
 /// Discord gateway intents, wires the event handler for Discord stats
-/// tracking, and starts the background stat sweeper.
+/// tracking, and starts the background stat sweeper and leaderboard updater.
 use std::sync::Arc;
 
 use poise::serenity_prelude as serenity;
@@ -10,10 +10,12 @@ use sqlx::SqlitePool;
 use tracing::info;
 
 use crate::commands;
+use crate::commands::leaderboard::leaderboard as lb;
 use crate::config::AppConfig;
 use crate::discord_stats::tracker;
 use crate::events::events;
 use crate::hypixel::client::HypixelClient;
+use crate::leaderboard_updater;
 use crate::shared::types::{Data, Error};
 use crate::sweeper;
 
@@ -36,6 +38,8 @@ pub async fn build(
     let hypixel_sweep_interval = config.hypixel_sweep_interval_seconds;
     let discord_sweep_interval = config.discord_sweep_interval_seconds;
     let sweep_config = config.clone();
+    let lb_db = db.clone();
+    let lb_config = config.clone();
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -110,10 +114,21 @@ pub async fn build(
                 );
                 sweeper::start_discord_sweeper(sweep_db, discord_sweep_interval, sweep_config);
 
+                // Start persistent leaderboard updater.
+                leaderboard_updater::start_leaderboard_updater(
+                    lb_db,
+                    Arc::clone(&ctx.http),
+                    lb_config,
+                );
+
+                // Create leaderboard image cache.
+                let leaderboard_cache = lb::new_cache(config.leaderboard_cache_seconds);
+
                 Ok(Data {
                     db,
                     hypixel,
                     config,
+                    leaderboard_cache,
                 })
             })
         })

@@ -398,6 +398,8 @@ mod tests {
             base_level_xp: 100.0,
             level_exponent: 1.5,
             admin_user_ids: Vec::new(),
+            leaderboard_cache_seconds: 60,
+            persistent_leaderboard_players: 10,
         }
     }
 

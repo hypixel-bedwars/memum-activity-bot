@@ -77,3 +77,34 @@ pub struct DbSweepCursor {
     pub last_snapshot_ts: String,
     pub updated_at: String,
 }
+
+// ---------------------------------------------------------------------------
+// persistent_leaderboards
+// ---------------------------------------------------------------------------
+
+/// A row from the `persistent_leaderboards` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbPersistentLeaderboard {
+    pub guild_id: i64,
+    pub channel_id: i64,
+    /// JSON array of Discord message IDs (one per page).
+    pub message_ids: String,
+    pub status_message_id: i64,
+    pub created_at: String,
+    pub last_updated: String,
+}
+
+// ---------------------------------------------------------------------------
+// Leaderboard entry (query result, not a table)
+// ---------------------------------------------------------------------------
+
+/// A single leaderboard row returned by the ranking query.
+/// Combines user info with their XP data.
+#[derive(Debug, Clone, FromRow)]
+pub struct LeaderboardEntry {
+    pub discord_user_id: i64,
+    pub minecraft_username: Option<String>,
+    pub minecraft_uuid: String,
+    pub total_xp: f64,
+    pub level: i64,
+}

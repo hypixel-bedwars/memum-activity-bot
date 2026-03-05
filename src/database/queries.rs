@@ -7,7 +7,7 @@
 /// for extensions and future commands.
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
-use super::models::{DbGuild, DbStatsSnapshot, DbSweepCursor, DbUser, DbXP};
+use super::models::{DbGuild, DbPersistentLeaderboard, DbStatsSnapshot, DbSweepCursor, DbUser, DbXP, LeaderboardEntry};
 
 // =========================================================================
 // guilds
@@ -491,6 +491,139 @@ pub async fn upsert_sweep_cursor_in_tx(
     .bind(last_snapshot_ts)
     .bind(updated_at)
     .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+// =========================================================================
+// leaderboard
+// =========================================================================
+
+/// Get the top N players in a guild, ranked by total XP descending.
+///
+/// `offset` is the number of rows to skip (for pagination).
+/// `limit` is the number of rows to return per page.
+pub async fn get_leaderboard(
+    pool: &SqlitePool,
+    guild_id: i64,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<LeaderboardEntry>, sqlx::Error> {
+    sqlx::query_as::<_, LeaderboardEntry>(
+        "SELECT u.discord_user_id,
+                u.minecraft_username,
+                u.minecraft_uuid,
+                COALESCE(x.total_xp, 0.0) AS total_xp,
+                COALESCE(x.level, 1) AS level
+         FROM users u
+         LEFT JOIN xp x ON x.user_id = u.id
+         WHERE u.guild_id = ?
+         ORDER BY total_xp DESC, u.id ASC
+         LIMIT ? OFFSET ?",
+    )
+    .bind(guild_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
+/// Count the total number of registered users in a guild (for pagination math).
+pub async fn count_users_in_guild(
+    pool: &SqlitePool,
+    guild_id: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE guild_id = ?")
+        .bind(guild_id)
+        .fetch_one(pool)
+        .await
+}
+
+// =========================================================================
+// persistent_leaderboards
+// =========================================================================
+
+/// Insert or update a persistent leaderboard entry for a guild.
+pub async fn upsert_persistent_leaderboard(
+    pool: &SqlitePool,
+    guild_id: i64,
+    channel_id: i64,
+    message_ids: &str,
+    status_message_id: i64,
+    created_at: &str,
+    last_updated: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO persistent_leaderboards (guild_id, channel_id, message_ids, status_message_id, created_at, last_updated)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(guild_id) DO UPDATE SET
+             channel_id   = excluded.channel_id,
+             message_ids  = excluded.message_ids,
+             status_message_id = excluded.status_message_id,
+             created_at   = excluded.created_at,
+             last_updated = excluded.last_updated",
+    )
+    .bind(guild_id)
+    .bind(channel_id)
+    .bind(message_ids)
+    .bind(status_message_id)
+    .bind(created_at)
+    .bind(last_updated)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Retrieve the persistent leaderboard row for a guild, if one exists.
+pub async fn get_persistent_leaderboard(
+    pool: &SqlitePool,
+    guild_id: i64,
+) -> Result<Option<DbPersistentLeaderboard>, sqlx::Error> {
+    sqlx::query_as::<_, DbPersistentLeaderboard>(
+        "SELECT * FROM persistent_leaderboards WHERE guild_id = ?",
+    )
+    .bind(guild_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Delete the persistent leaderboard row for a guild.
+pub async fn delete_persistent_leaderboard(
+    pool: &SqlitePool,
+    guild_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM persistent_leaderboards WHERE guild_id = ?")
+        .bind(guild_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Get all persistent leaderboard rows (used by the updater background task).
+pub async fn get_all_persistent_leaderboards(
+    pool: &SqlitePool,
+) -> Result<Vec<DbPersistentLeaderboard>, sqlx::Error> {
+    sqlx::query_as::<_, DbPersistentLeaderboard>("SELECT * FROM persistent_leaderboards")
+        .fetch_all(pool)
+        .await
+}
+
+/// Update message IDs and last_updated for a persistent leaderboard.
+pub async fn update_persistent_leaderboard_messages(
+    pool: &SqlitePool,
+    guild_id: i64,
+    message_ids: &str,
+    last_updated: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE persistent_leaderboards
+         SET message_ids = ?, last_updated = ?
+         WHERE guild_id = ?",
+    )
+    .bind(message_ids)
+    .bind(last_updated)
+    .bind(guild_id)
+    .execute(pool)
     .await?;
     Ok(())
 }

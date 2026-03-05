@@ -1,6 +1,7 @@
 use poise::serenity_prelude as serenity;
 use tracing::warn;
 
+use crate::commands::leaderboard::leaderboard as lb;
 use crate::commands::registration::register::perform_registration;
 use crate::shared::types::{Data, Error};
 
@@ -28,6 +29,10 @@ pub async fn event_handler(
         if let serenity::Interaction::Component(component) = interaction {
             if component.data.custom_id == "register_button" {
                 handle_register_button(ctx, component, data).await?;
+            } else if component.data.custom_id.starts_with("lb_page_") {
+                if let Err(e) = lb::handle_pagination(ctx, component, data).await {
+                    tracing::error!(error = %e, "Leaderboard pagination handler failed");
+                }
             }
         }
     }

@@ -5,10 +5,12 @@ pub mod admin;
 /// during framework setup. To add a new command, implement it in its own file
 /// inside the appropriate subfolder and add it to the vector returned by `all()`.
 ///
-/// Commands are organized into three submodules:
-/// - `registration` — user-facing account linking commands
-/// - `stats`        — stat viewing commands
-/// - `admin`        — server configuration commands (admin only)
+/// Commands are organized into four submodules:
+/// - `registration`  — user-facing account linking commands
+/// - `stats`         — stat viewing commands
+/// - `admin`         — server configuration commands (admin only)
+/// - `leaderboard`   — leaderboard commands (user + admin)
+pub mod leaderboard;
 pub mod registration;
 pub mod stats;
 
@@ -24,5 +26,8 @@ pub fn all() -> Vec<poise::Command<Data, Error>> {
         stats::level::level(),
         admin::set_register_role::set_register_role(),
         admin::edit_stats::edit_stats(),
+        leaderboard::leaderboard::leaderboard(),
+        leaderboard::leaderboard_create::leaderboard_create(),
+        leaderboard::leaderboard_remove::leaderboard_remove(),
     ]
 }

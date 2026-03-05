@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
+use crate::commands::leaderboard::leaderboard::LeaderboardCache;
 use crate::config::AppConfig;
 use crate::hypixel::client::HypixelClient;
 
@@ -40,6 +41,9 @@ pub struct Data {
 
     /// Application-level configuration loaded from environment variables.
     pub config: AppConfig,
+
+    /// Timed cache for leaderboard page images, keyed by `(guild_id, page)`.
+    pub leaderboard_cache: LeaderboardCache,
 }
 
 // ---------------------------------------------------------------------------
