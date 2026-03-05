@@ -9,10 +9,6 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-// ---------------------------------------------------------------------------
-// Application-level config (from .env)
-// ---------------------------------------------------------------------------
-
 /// Top-level configuration sourced from environment variables.
 ///
 /// This is constructed once during startup and stored in the shared `Data`

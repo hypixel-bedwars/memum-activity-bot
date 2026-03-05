@@ -66,10 +66,6 @@ pub struct HypixelStats {
 #[derive(Debug, Deserialize)]
 pub struct HypixelBedwarsRaw(pub HashMap<String, Value>);
 
-// ---------------------------------------------------------------------------
-// Dream-mode stat filtering
-// ---------------------------------------------------------------------------
-
 /// Substrings that identify dream-mode stats (e.g. `_voidless_kills_bedwars`).
 const DREAM_MODE_SUBSTRINGS: &[&str] = &[
     "_voidless_",
