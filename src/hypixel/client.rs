@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use reqwest::Client;
+use std::collections::HashMap;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::debug;
-use std::collections::HashMap;
 
 use super::models::{BedwarsStats, HypixelPlayerResponse, MojangProfile, PlayerData};
 use crate::shared::cache::TimedCache;
@@ -85,34 +85,34 @@ impl HypixelClient {
         debug!(username, uuid = %profile.id, "Resolved Minecraft username");
         Ok(profile)
     }
-    
+
     pub async fn resolve_uuid(&self, uuid: &str) -> Result<String> {
         let url = format!(
             "https://sessionserver.mojang.com/session/minecraft/profile/{}",
             uuid
         );
-    
+
         let resp = self
             .http
             .get(&url)
             .send()
             .await
             .context("Failed to contact Mojang session API")?;
-    
+
         if !resp.status().is_success() {
             bail!("Failed to resolve UUID {}", uuid);
         }
-    
+
         #[derive(serde::Deserialize)]
         struct Profile {
             name: String,
         }
-    
+
         let profile: Profile = resp
             .json()
             .await
             .context("Failed to parse Mojang session response")?;
-    
+
         Ok(profile.name)
     }
 
@@ -143,10 +143,7 @@ impl HypixelClient {
                     .map(|bw| BedwarsStats::from_raw(&bw))
                     .unwrap_or_else(BedwarsStats::empty);
 
-                let socials = player
-                    .social_media
-                    .map(|s| s.links)
-                    .unwrap_or_default();
+                let socials = player.social_media.map(|s| s.links).unwrap_or_default();
 
                 (bw, socials)
             }

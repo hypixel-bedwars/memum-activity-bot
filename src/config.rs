@@ -28,8 +28,11 @@ pub struct AppConfig {
     /// SQLx database connection string (e.g. `sqlite:bot.db`).
     pub database_url: String,
 
-    /// How often the stat sweeper runs, in seconds.
-    pub sweep_interval_seconds: u64,
+    /// How often the Hypixel stat sweeper runs, in seconds.
+    pub hypixel_sweep_interval_seconds: u64,
+
+    /// How often the Discord stat sweeper runs, in seconds.
+    pub discord_sweep_interval_seconds: u64,
 
     /// Base XP required to reach level 2. Higher levels scale exponentially.
     pub base_level_xp: f64,
@@ -53,10 +56,14 @@ impl AppConfig {
             hypixel_api_key: env::var("HYPIXEL_API_KEY")
                 .expect("HYPIXEL_API_KEY must be set in .env"),
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:bot.db".to_string()),
-            sweep_interval_seconds: env::var("SWEEP_INTERVAL_SECONDS")
-                .unwrap_or_else(|_| "300".to_string())
+            hypixel_sweep_interval_seconds: env::var("HYPIXEL_SWEEP_INTERVAL_SECONDS")
+                .unwrap_or_else(|_| "60".to_string())
                 .parse()
-                .expect("SWEEP_INTERVAL_SECONDS must be a valid u64"),
+                .expect("HYPIXEL_SWEEP_INTERVAL_SECONDS must be a valid u64"),
+            discord_sweep_interval_seconds: env::var("DISCORD_SWEEP_INTERVAL_SECONDS")
+                .unwrap_or_else(|_| "15".to_string())
+                .parse()
+                .expect("DISCORD_SWEEP_INTERVAL_SECONDS must be a valid u64"),
             base_level_xp: env::var("BASE_LEVEL_XP")
                 .unwrap_or_else(|_| "100".to_string())
                 .parse()

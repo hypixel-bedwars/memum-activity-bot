@@ -13,7 +13,8 @@ use crate::shared::types::{Context, Error};
 #[poise::command(slash_command, guild_only, ephemeral)]
 pub async fn send_registration_message(
     ctx: Context<'_>,
-    #[description = "The channel to send the registration message to"] channel: serenity::GuildChannel,
+    #[description = "The channel to send the registration message to"]
+    channel: serenity::GuildChannel,
 ) -> Result<(), Error> {
     if !ctx
         .data()
@@ -47,7 +48,10 @@ pub async fn send_registration_message(
                 .style(serenity::ButtonStyle::Success),
         ])]);
 
-    channel.id.send_message(&ctx.serenity_context().http, message).await?;
+    channel
+        .id
+        .send_message(&ctx.serenity_context().http, message)
+        .await?;
 
     info!(
         admin = ctx.author().id.get(),
@@ -58,10 +62,7 @@ pub async fn send_registration_message(
     let embed = CreateEmbed::default()
         .title("Registration Message Sent")
         .color(0x00BFFF)
-        .description(format!(
-            "Registration message sent to <#{}>.",
-            channel.id
-        ));
+        .description(format!("Registration message sent to <#{}>.", channel.id));
     ctx.send(poise::CreateReply::default().embed(embed)).await?;
 
     Ok(())

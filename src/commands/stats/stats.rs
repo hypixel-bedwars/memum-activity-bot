@@ -72,12 +72,10 @@ pub async fn stats(
     // ── fetch latest and initial snapshots, compute deltas ───────────────────
     let mc_name = match &db_user.minecraft_username {
         Some(name) => name.clone(),
-        None => {
-            match data.hypixel.resolve_uuid(&db_user.minecraft_uuid).await {
-                Ok(name) => name,
-                Err(_) => db_user.minecraft_uuid.clone(),
-            }
-        }
+        None => match data.hypixel.resolve_uuid(&db_user.minecraft_uuid).await {
+            Ok(name) => name,
+            Err(_) => db_user.minecraft_uuid.clone(),
+        },
     };
 
     let mut embed = CreateEmbed::default()

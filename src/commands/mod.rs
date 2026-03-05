@@ -1,3 +1,4 @@
+pub mod admin;
 /// Command registration.
 ///
 /// All slash commands are aggregated here into a single `Vec` that Poise uses
@@ -10,7 +11,6 @@
 /// - `admin`        — server configuration commands (admin only)
 pub mod registration;
 pub mod stats;
-pub mod admin;
 
 use crate::shared::types::{Data, Error};
 

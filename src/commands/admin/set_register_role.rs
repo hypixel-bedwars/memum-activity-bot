@@ -15,7 +15,12 @@ pub async fn set_register_role(
     #[description = "The role to assign to users when they register"] role: serenity::Role,
 ) -> Result<(), Error> {
     // Inline admin check — replies ephemerally and exits if not authorised.
-    if !ctx.data().config.admin_user_ids.contains(&ctx.author().id.get()) {
+    if !ctx
+        .data()
+        .config
+        .admin_user_ids
+        .contains(&ctx.author().id.get())
+    {
         let embed = CreateEmbed::default()
             .title("Permission Denied")
             .color(0xFF4444)
@@ -24,7 +29,10 @@ pub async fn set_register_role(
         return Ok(());
     }
 
-    debug!("Invoked /set-register-role with role {} (ID {})", role.name, role.id);
+    debug!(
+        "Invoked /set-register-role with role {} (ID {})",
+        role.name, role.id
+    );
 
     let guild_id = ctx
         .guild_id()

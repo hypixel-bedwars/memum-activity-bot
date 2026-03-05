@@ -33,7 +33,8 @@ pub async fn build(
     // Clone values that need to move into closures.
     let sweep_db = db.clone();
     let sweep_hypixel = hypixel.clone();
-    let sweep_interval = config.sweep_interval_seconds;
+    let hypixel_sweep_interval = config.hypixel_sweep_interval_seconds;
+    let discord_sweep_interval = config.discord_sweep_interval_seconds;
     let sweep_config = config.clone();
 
     let framework = poise::Framework::builder()
@@ -100,8 +101,14 @@ pub async fn build(
                     info!("DEV_GUILD_ID not set, skipping slash command registration");
                 }
 
-                // Start background sweeper
-                sweeper::start_sweeper(sweep_db, sweep_hypixel, sweep_interval, sweep_config);
+                // Start background sweepers.
+                sweeper::start_hypixel_sweeper(
+                    sweep_db.clone(),
+                    sweep_hypixel,
+                    hypixel_sweep_interval,
+                    sweep_config.clone(),
+                );
+                sweeper::start_discord_sweeper(sweep_db, discord_sweep_interval, sweep_config);
 
                 Ok(Data {
                     db,

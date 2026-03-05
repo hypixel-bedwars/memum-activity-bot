@@ -1,37 +1,39 @@
-/// Background stat sweeper.
+/// Background stat sweepers.
 ///
-/// Periodically fetches Hypixel stats for all registered users, computes
-/// deltas against the most recent snapshot, stores a new snapshot, and feeds
-/// the deltas into the XP calculator. Discord activity deltas are always
-/// collected; whether they contribute to XP is controlled by the guild's
-/// `xp_config`.
+/// This module contains source-specific sweeps:
+/// - `run_hypixel_sweep` for Hypixel Bedwars polling
+/// - `run_discord_sweep` for Discord activity XP processing
 ///
-/// Snapshot efficiency: on each sweep only stats currently present in
-/// `xp_config` receive new snapshot rows (saves write amplification). When a
-/// stat is first added to `xp_config` the sweeper's baseline query returns the
-/// registration snapshot, so the delta is computed from the time of
-/// registration — this is intentional.
+/// Both sweepers emit `StatDelta` values and pass them into the same XP update
+/// pipeline so XP math and level progression stay centralized.
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use sqlx::SqlitePool;
 use time::OffsetDateTime;
 use tracing::{error, info, warn};
 
 use crate::config::{AppConfig, GuildConfig};
+use crate::database::models::{DbUser, DbXP};
 use crate::database::queries;
 use crate::hypixel::client::HypixelClient;
-use crate::xp::calculator;
 use crate::shared::types::StatDelta;
+use crate::stats_definitions::is_discord_stat;
+use crate::xp::XPConfig;
+use crate::xp::calculator;
 
-/// Discord stat names that are tracked in the `discord_stats_snapshot` table.
-const DISCORD_STAT_NAMES: &[&str] = &["messages_sent", "reactions_added", "commands_used"];
+const DISCORD_SOURCE: &str = "discord";
 
-/// Run a single sweep iteration for all registered users.
-///
-/// This is called by the background loop in `start_sweeper` but is also
-/// usable standalone (e.g. for testing or manual triggers).
-pub async fn run_sweep(
+#[derive(Debug, Clone)]
+struct CursorUpdate {
+    source: &'static str,
+    stat_name: String,
+    stat_value: f64,
+    last_snapshot_ts: String,
+}
+
+/// Run a single Hypixel sweep iteration for all registered users.
+pub async fn run_hypixel_sweep(
     pool: &SqlitePool,
     hypixel: &Arc<HypixelClient>,
     config: &AppConfig,
@@ -39,67 +41,88 @@ pub async fn run_sweep(
     let users = queries::get_all_registered_users(pool).await?;
 
     if users.is_empty() {
-        info!("Sweep: no registered users, skipping.");
+        info!("Hypixel sweep: no registered users, skipping.");
         return Ok(());
     }
 
-    info!("Sweep: processing {} registered user(s)...", users.len());
+    info!(
+        "Hypixel sweep: processing {} registered user(s)...",
+        users.len()
+    );
 
     for user in &users {
-        if let Err(e) = sweep_user(pool, hypixel, user, config).await {
+        if let Err(e) = sweep_hypixel_user(pool, hypixel, user, config).await {
             warn!(
                 user_id = user.id,
                 discord_user_id = user.discord_user_id,
                 error = %e,
-                "Sweep: failed to process user, skipping."
+                "Hypixel sweep: failed to process user, skipping."
             );
         }
     }
 
-    info!("Sweep: iteration complete.");
+    info!("Hypixel sweep: iteration complete.");
     Ok(())
 }
 
-/// Sweep a single user: fetch stats, diff, snapshot, award XP, update level.
-async fn sweep_user(
+/// Run a single Discord sweep iteration for all registered users.
+pub async fn run_discord_sweep(pool: &SqlitePool, config: &AppConfig) -> Result<()> {
+    let users = queries::get_all_registered_users(pool).await?;
+
+    if users.is_empty() {
+        info!("Discord sweep: no registered users, skipping.");
+        return Ok(());
+    }
+
+    info!(
+        "Discord sweep: processing {} registered user(s)...",
+        users.len()
+    );
+
+    for user in &users {
+        if let Err(e) = sweep_discord_user(pool, user, config).await {
+            warn!(
+                user_id = user.id,
+                discord_user_id = user.discord_user_id,
+                error = %e,
+                "Discord sweep: failed to process user, skipping."
+            );
+        }
+    }
+
+    info!("Discord sweep: iteration complete.");
+    Ok(())
+}
+
+/// Sweep one user's Hypixel stats.
+async fn sweep_hypixel_user(
     pool: &SqlitePool,
     hypixel: &Arc<HypixelClient>,
-    user: &crate::database::models::DbUser,
+    user: &DbUser,
     config: &AppConfig,
 ) -> Result<()> {
-    // 1. Fetch current stats from Hypixel.
+    // Fetch player data exactly once per user per Hypixel sweep.
     let player_data = hypixel.fetch_player(&user.minecraft_uuid).await?;
     let bw = &player_data.bedwars;
 
-    let now = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "unknown".to_string());
-
-    // 2. Load guild config (required to know which stats are in xp_config).
+    let now = now_rfc3339();
     let guild_config = load_guild_config(pool, user.guild_id).await;
 
-    // 3. For each Hypixel stat currently in xp_config, compare with the latest
-    //    snapshot and build deltas. Only stats in xp_config receive new snapshot
-    //    rows on each sweep; all others are left unchanged.
     let mut deltas: Vec<StatDelta> = Vec::new();
 
     for stat_name in guild_config.xp_config.keys() {
-        // Discord stats live in a separate table — handled in step 4.
-        if DISCORD_STAT_NAMES.contains(&stat_name.as_str()) {
+        if is_discord_stat(stat_name) {
             continue;
         }
 
-        // Look up the current value from the live Hypixel data.
         let new_value = match bw.stats.get(stat_name) {
             Some(&v) => v,
-            None => continue, // Stat not present in player data, skip.
+            None => continue,
         };
 
-        let previous =
-            queries::get_latest_hypixel_snapshot(pool, user.id, stat_name).await?;
+        let previous = queries::get_latest_hypixel_snapshot(pool, user.id, stat_name).await?;
 
-        // If no prior snapshot exists for this stat yet, create a baseline and
-        // skip awarding XP for this sweep.
+        // If this stat has no snapshots yet, seed a baseline and skip XP for now.
         if previous.is_none() {
             queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, &now).await?;
             continue;
@@ -107,10 +130,8 @@ async fn sweep_user(
 
         let old_value = previous.as_ref().map(|s| s.stat_value).unwrap_or(0.0);
 
-        // Store a new snapshot so we have a continuous timeline.
         queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, &now).await?;
 
-        // Only produce a delta if the value actually changed.
         let diff = new_value - old_value;
         if diff.abs() > f64::EPSILON {
             deltas.push(StatDelta::new(
@@ -122,86 +143,205 @@ async fn sweep_user(
         }
     }
 
-    // 4. Collect Discord activity deltas (always — XP gated by xp_config in
-    //    the calculator, not here).
-    for &stat_name in DISCORD_STAT_NAMES {
-        let latest = queries::get_latest_discord_snapshot(pool, user.id, stat_name).await?;
-        if let Some(snap) = latest {
-            let current_value = snap.stat_value;
+    apply_stat_deltas(
+        pool,
+        user,
+        &guild_config,
+        config,
+        &deltas,
+        &[],
+        &now,
+        "Hypixel sweep",
+    )
+    .await
+}
 
-            // Get the user's XP row to find last_updated (last sweep time) and
-            // compare the current cumulative value against what it was then.
-            let xp_row = queries::get_xp(pool, user.id).await?;
-            let old_value = match &xp_row {
-                Some(xp) => {
-                    get_discord_value_at_time(pool, user.id, stat_name, &xp.last_updated)
-                        .await
-                        .unwrap_or(0.0)
-                }
-                None => 0.0,
-            };
+/// Sweep one user's Discord stats using cursor checkpoints.
+async fn sweep_discord_user(pool: &SqlitePool, user: &DbUser, config: &AppConfig) -> Result<()> {
+    let now = now_rfc3339();
+    let guild_config = load_guild_config(pool, user.guild_id).await;
+    let xp_row = queries::get_xp(pool, user.id).await?;
 
-            let diff = current_value - old_value;
-            if diff > f64::EPSILON {
-                deltas.push(StatDelta::new(
-                    user.id,
-                    stat_name.to_string(),
-                    old_value,
-                    current_value,
-                ));
-            }
-        }
+    let discord_stat_keys: Vec<String> = guild_config
+        .xp_config
+        .keys()
+        .filter(|k| is_discord_stat(k))
+        .cloned()
+        .collect();
+
+    if discord_stat_keys.is_empty() {
+        return Ok(());
     }
 
-    // 5. If there are meaningful deltas, calculate XP and update total/level.
-    if !deltas.is_empty() {
-        let xp_cfg = crate::xp::XPConfig::new(guild_config.xp_config.clone());
+    let mut deltas: Vec<StatDelta> = Vec::new();
+    let mut cursor_updates: Vec<CursorUpdate> = Vec::new();
 
-        let earned = calculator::calculate_xp(&deltas, &xp_cfg);
-        if earned > 0.0 {
-            // Fetch current XP total and level.
-            let xp_row = queries::get_xp(pool, user.id).await?;
-            let current_xp = xp_row.as_ref().map(|x| x.total_xp).unwrap_or(0.0);
-            let old_level = xp_row.as_ref().map(|x| x.level).unwrap_or(1);
+    for stat_name in discord_stat_keys {
+        let latest = match queries::get_latest_discord_snapshot(pool, user.id, &stat_name).await? {
+            Some(snap) => snap,
+            None => continue,
+        };
 
-            let new_total = current_xp + earned;
-            let new_level = calculator::calculate_level(
-                new_total,
-                config.base_level_xp,
-                config.level_exponent,
-            ) as i64;
+        let old_value = match queries::get_sweep_cursor(pool, user.id, DISCORD_SOURCE, &stat_name)
+            .await?
+        {
+            Some(cursor) => cursor.stat_value,
+            None => bootstrap_discord_old_value(pool, user.id, &stat_name, xp_row.as_ref()).await,
+        };
 
-            // Persist new total XP and level.
-            queries::set_xp_and_level(pool, user.id, new_total, new_level, &now).await?;
+        let diff = latest.stat_value - old_value;
+        if diff > f64::EPSILON {
+            deltas.push(StatDelta::new(
+                user.id,
+                stat_name.clone(),
+                old_value,
+                latest.stat_value,
+            ));
+        }
 
+        cursor_updates.push(CursorUpdate {
+            source: DISCORD_SOURCE,
+            stat_name,
+            stat_value: latest.stat_value,
+            last_snapshot_ts: latest.timestamp,
+        });
+    }
+
+    apply_stat_deltas(
+        pool,
+        user,
+        &guild_config,
+        config,
+        &deltas,
+        &cursor_updates,
+        &now,
+        "Discord sweep",
+    )
+    .await
+}
+
+/// Shared XP pipeline used by both source-specific sweepers.
+async fn apply_stat_deltas(
+    pool: &SqlitePool,
+    user: &DbUser,
+    guild_config: &GuildConfig,
+    config: &AppConfig,
+    deltas: &[StatDelta],
+    cursor_updates: &[CursorUpdate],
+    now: &str,
+    source_label: &str,
+) -> Result<()> {
+    let xp_cfg = XPConfig::new(guild_config.xp_config.clone());
+    let earned = calculator::calculate_xp(deltas, &xp_cfg);
+
+    if earned <= 0.0 && cursor_updates.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = pool.begin().await?;
+
+    // Atomic XP increment protects against lost updates when multiple sweeper
+    // loops process the same user concurrently.
+    if earned > 0.0 {
+        sqlx::query(
+            "INSERT INTO xp (user_id, total_xp, last_updated)
+             VALUES (?, ?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET
+                 total_xp = xp.total_xp + excluded.total_xp,
+                 last_updated = excluded.last_updated",
+        )
+        .bind(user.id)
+        .bind(earned)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
+        let xp_row = sqlx::query_as::<_, crate::database::models::DbXP>(
+            "SELECT * FROM xp WHERE user_id = ?",
+        )
+        .bind(user.id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| anyhow!("XP row missing after upsert for user {}", user.id))?;
+
+        let old_level = xp_row.level;
+        let new_level = calculator::calculate_level(
+            xp_row.total_xp,
+            config.base_level_xp,
+            config.level_exponent,
+        ) as i64;
+
+        if new_level != old_level {
+            sqlx::query("UPDATE xp SET level = ?, last_updated = ? WHERE user_id = ?")
+                .bind(new_level)
+                .bind(now)
+                .bind(user.id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        info!(
+            user_id = user.id,
+            earned,
+            total_xp = xp_row.total_xp,
+            level = new_level,
+            source = source_label,
+            "{}: XP updated for user.",
+            source_label
+        );
+
+        if new_level > old_level {
             info!(
                 user_id = user.id,
-                earned = earned,
-                total_xp = new_total,
-                level = new_level,
-                "Sweep: XP updated for user."
+                discord_user_id = user.discord_user_id,
+                old_level,
+                new_level,
+                total_xp = xp_row.total_xp,
+                source = source_label,
+                "{}: level up detected.",
+                source_label
             );
-
-            // 6. Level-up detection.
-            if new_level > old_level {
-                info!(
-                    user_id = user.id,
-                    discord_user_id = user.discord_user_id,
-                    old_level = old_level,
-                    new_level = new_level,
-                    total_xp = new_total,
-                    "Level up! User advanced from level {} to level {}.",
-                    old_level,
-                    new_level
-                );
-            }
         }
     }
 
+    for cursor in cursor_updates {
+        queries::upsert_sweep_cursor_in_tx(
+            &mut tx,
+            user.id,
+            cursor.source,
+            &cursor.stat_name,
+            cursor.stat_value,
+            &cursor.last_snapshot_ts,
+            now,
+        )
+        .await?;
+    }
+
+    tx.commit().await?;
     Ok(())
 }
 
-/// Get the discord stat value that was current at or before a given timestamp.
+/// Bootstrap policy for Discord cursor initialization.
+///
+/// If the cursor is missing, use the snapshot value at or before the user's
+/// current XP `last_updated` timestamp. This preserves existing rollout
+/// semantics and avoids retroactive XP spikes.
+async fn bootstrap_discord_old_value(
+    pool: &SqlitePool,
+    user_id: i64,
+    stat_name: &str,
+    xp_row: Option<&DbXP>,
+) -> f64 {
+    let Some(xp) = xp_row else {
+        return 0.0;
+    };
+
+    get_discord_value_at_time(pool, user_id, stat_name, &xp.last_updated)
+        .await
+        .unwrap_or(0.0)
+}
+
+/// Get the Discord stat value that was current at or before a given timestamp.
 async fn get_discord_value_at_time(
     pool: &SqlitePool,
     user_id: i64,
@@ -222,6 +362,12 @@ async fn get_discord_value_at_time(
     .ok()?
 }
 
+fn now_rfc3339() -> String {
+    OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
 /// Load and parse the guild config, falling back to defaults on error.
 async fn load_guild_config(pool: &SqlitePool, guild_id: i64) -> GuildConfig {
     match queries::get_guild(pool, guild_id).await {
@@ -231,5 +377,180 @@ async fn load_guild_config(pool: &SqlitePool, guild_id: i64) -> GuildConfig {
             error!(guild_id, error = %e, "Failed to load guild config, using defaults.");
             GuildConfig::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+    use crate::database;
+
+    fn test_app_config() -> AppConfig {
+        AppConfig {
+            discord_token: "test".to_string(),
+            hypixel_api_key: "test".to_string(),
+            database_url: "sqlite:test.db".to_string(),
+            hypixel_sweep_interval_seconds: 60,
+            discord_sweep_interval_seconds: 15,
+            base_level_xp: 100.0,
+            level_exponent: 1.5,
+            admin_user_ids: Vec::new(),
+        }
+    }
+
+    async fn test_pool() -> SqlitePool {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let db_path = format!("target/test-sweeper-{}.db", nanos);
+        let _ = std::fs::remove_file(&db_path);
+        database::init_db(&format!("sqlite:{}", db_path))
+            .await
+            .expect("test db should initialize")
+    }
+
+    async fn setup_user_with_discord_xp_stat(pool: &SqlitePool) -> DbUser {
+        let guild_id = 42_i64;
+        queries::upsert_guild(pool, guild_id)
+            .await
+            .expect("guild should be upserted");
+
+        let mut guild_cfg = GuildConfig::default();
+        guild_cfg.xp_config = HashMap::new();
+        guild_cfg.xp_config.insert("messages_sent".to_string(), 1.0);
+        queries::update_guild_config(
+            pool,
+            guild_id,
+            &serde_json::to_string(&guild_cfg).expect("guild config should serialize"),
+        )
+        .await
+        .expect("guild config should update");
+
+        queries::register_user(
+            pool,
+            1001,
+            "uuid-test",
+            "player",
+            guild_id,
+            "2026-01-01T00:00:00Z",
+        )
+        .await
+        .expect("user should register")
+    }
+
+    #[tokio::test]
+    async fn discord_sweep_bootstraps_from_last_xp_timestamp() {
+        let pool = test_pool().await;
+        let config = test_app_config();
+        let user = setup_user_with_discord_xp_stat(&pool).await;
+
+        queries::insert_discord_snapshot(
+            &pool,
+            user.id,
+            "messages_sent",
+            0.0,
+            "2026-01-01T00:00:00Z",
+        )
+        .await
+        .expect("baseline discord snapshot should insert");
+        queries::insert_discord_snapshot(
+            &pool,
+            user.id,
+            "messages_sent",
+            5.0,
+            "2026-01-01T00:05:00Z",
+        )
+        .await
+        .expect("intermediate discord snapshot should insert");
+        queries::insert_discord_snapshot(
+            &pool,
+            user.id,
+            "messages_sent",
+            9.0,
+            "2026-01-01T00:10:00Z",
+        )
+        .await
+        .expect("latest discord snapshot should insert");
+
+        // Cursor is intentionally absent. First run should bootstrap from this
+        // timestamp and award only the 5 -> 9 delta.
+        queries::set_xp_and_level(&pool, user.id, 10.0, 1, "2026-01-01T00:05:00Z")
+            .await
+            .expect("xp row should seed");
+
+        run_discord_sweep(&pool, &config)
+            .await
+            .expect("discord sweep should run");
+
+        let xp = queries::get_xp(&pool, user.id)
+            .await
+            .expect("xp query should succeed")
+            .expect("xp row should exist");
+        assert_eq!(xp.total_xp, 14.0);
+
+        let cursor = queries::get_sweep_cursor(&pool, user.id, DISCORD_SOURCE, "messages_sent")
+            .await
+            .expect("cursor query should succeed")
+            .expect("cursor should be created");
+        assert_eq!(cursor.stat_value, 9.0);
+    }
+
+    #[tokio::test]
+    async fn apply_stat_deltas_is_atomic_under_concurrent_writes() {
+        let pool = test_pool().await;
+        let config = test_app_config();
+        let user = setup_user_with_discord_xp_stat(&pool).await;
+
+        let mut guild_cfg = GuildConfig::default();
+        guild_cfg.xp_config = HashMap::new();
+        guild_cfg.xp_config.insert("messages_sent".to_string(), 1.0);
+
+        let deltas_a = vec![StatDelta::new(
+            user.id,
+            "messages_sent".to_string(),
+            0.0,
+            3.0,
+        )];
+        let deltas_b = vec![StatDelta::new(
+            user.id,
+            "messages_sent".to_string(),
+            0.0,
+            7.0,
+        )];
+
+        let fut_a = apply_stat_deltas(
+            &pool,
+            &user,
+            &guild_cfg,
+            &config,
+            &deltas_a,
+            &[],
+            "2026-01-01T00:10:00Z",
+            "Test A",
+        );
+        let fut_b = apply_stat_deltas(
+            &pool,
+            &user,
+            &guild_cfg,
+            &config,
+            &deltas_b,
+            &[],
+            "2026-01-01T00:10:01Z",
+            "Test B",
+        );
+
+        let (res_a, res_b) = tokio::join!(fut_a, fut_b);
+        res_a.expect("first concurrent update should succeed");
+        res_b.expect("second concurrent update should succeed");
+
+        let xp = queries::get_xp(&pool, user.id)
+            .await
+            .expect("xp query should succeed")
+            .expect("xp row should exist");
+        assert_eq!(xp.total_xp, 10.0);
     }
 }

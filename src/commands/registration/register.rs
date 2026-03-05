@@ -63,13 +63,11 @@ pub async fn perform_registration(
             }
         }
         None => {
-            return Ok(
-                "Ownership verification failed.\n\n\
+            return Ok("Ownership verification failed.\n\n\
                  Your Hypixel account must have a **Discord social link** set.\n\
                  Please link your Discord in Hypixel:\n\
                  `/socials discord <your discord>`"
-                    .to_string(),
-            );
+                .to_string());
         }
     }
 
@@ -80,11 +78,9 @@ pub async fn perform_registration(
                 "Guild {} attempted registration but has no registered role configured.",
                 guild_id_i64
             );
-            return Ok(
-                "Registration is not configured on this server. \
+            return Ok("Registration is not configured on this server. \
                 An administrator must set a registered role first."
-                    .to_string(),
-            );
+                .to_string());
         }
     };
 
@@ -121,9 +117,15 @@ pub async fn perform_registration(
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "unknown".to_string());
 
-    let db_user =
-        queries::register_user(&data.db, discord_user_id, &profile.id, &profile.name, guild_id_i64, &now)
-            .await?;
+    let db_user = queries::register_user(
+        &data.db,
+        discord_user_id,
+        &profile.id,
+        &profile.name,
+        guild_id_i64,
+        &now,
+    )
+    .await?;
 
     let bw = &player_data.bedwars;
     for (stat_name, value) in &bw.stats {
@@ -175,7 +177,11 @@ pub async fn register(
     // Detect success by looking for the phrase we set in the success branch.
     let success = msg.contains("You have been registered");
     let embed = CreateEmbed::default()
-        .title(if success { "Registration Successful" } else { "Registration Failed" })
+        .title(if success {
+            "Registration Successful"
+        } else {
+            "Registration Failed"
+        })
         .color(if success { 0x00BFFF } else { 0xFF4444 })
         .description(msg);
 

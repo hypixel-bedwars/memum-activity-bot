@@ -17,13 +17,13 @@ mod commands;
 mod config;
 mod database;
 mod discord_stats;
+mod events;
 mod hypixel;
 mod level_card;
-mod stats_definitions;
-mod xp;
-mod events;
 mod shared;
+mod stats_definitions;
 mod sweeper;
+mod xp;
 
 use poise::serenity_prelude as serenity;
 use tracing::info;

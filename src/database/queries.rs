@@ -5,9 +5,9 @@
 ///
 /// Some functions are not yet called but exist as part of the public query API
 /// for extensions and future commands.
-use sqlx::{SqlitePool};
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
-use super::models::{DbGuild, DbXP, DbStatsSnapshot, DbUser};
+use super::models::{DbGuild, DbStatsSnapshot, DbSweepCursor, DbUser, DbXP};
 
 // =========================================================================
 // guilds
@@ -32,7 +32,11 @@ pub async fn get_guild(pool: &SqlitePool, guild_id: i64) -> Result<Option<DbGuil
 }
 
 /// Update the `config_json` column for a guild.
-pub async fn update_guild_config(pool: &SqlitePool, guild_id: i64, config_json: &str,) -> Result<(), sqlx::Error> {
+pub async fn update_guild_config(
+    pool: &SqlitePool,
+    guild_id: i64,
+    config_json: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE guilds SET config_json = ? WHERE guild_id = ?")
         .bind(config_json)
         .bind(guild_id)
@@ -182,15 +186,13 @@ pub async fn unregister_user(
     discord_user_id: i64,
     guild_id: i64,
 ) -> Result<(), sqlx::Error> {
-
     // Get the internal user id
-    let user_id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM users WHERE discord_user_id = ? AND guild_id = ?"
-    )
-    .bind(discord_user_id)
-    .bind(guild_id)
-    .fetch_optional(pool)
-    .await?;
+    let user_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM users WHERE discord_user_id = ? AND guild_id = ?")
+            .bind(discord_user_id)
+            .bind(guild_id)
+            .fetch_optional(pool)
+            .await?;
 
     if let Some(uid) = user_id {
         // delete dependent rows first
@@ -205,6 +207,11 @@ pub async fn unregister_user(
             .await?;
 
         sqlx::query("DELETE FROM xp WHERE user_id = ?")
+            .bind(uid)
+            .execute(pool)
+            .await?;
+
+        sqlx::query("DELETE FROM sweep_cursor WHERE user_id = ?")
             .bind(uid)
             .execute(pool)
             .await?;
@@ -405,5 +412,85 @@ pub async fn delete_xp(pool: &SqlitePool, user_id: i64) -> Result<(), sqlx::Erro
         .bind(user_id)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+// =========================================================================
+// sweep_cursor
+// =========================================================================
+
+/// Get the current sweep cursor for a given user/source/stat tuple.
+pub async fn get_sweep_cursor(
+    pool: &SqlitePool,
+    user_id: i64,
+    source: &str,
+    stat_name: &str,
+) -> Result<Option<DbSweepCursor>, sqlx::Error> {
+    sqlx::query_as::<_, DbSweepCursor>(
+        "SELECT * FROM sweep_cursor
+         WHERE user_id = ? AND source = ? AND stat_name = ?",
+    )
+    .bind(user_id)
+    .bind(source)
+    .bind(stat_name)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Insert or update a sweep cursor row.
+pub async fn upsert_sweep_cursor(
+    pool: &SqlitePool,
+    user_id: i64,
+    source: &str,
+    stat_name: &str,
+    stat_value: f64,
+    last_snapshot_ts: &str,
+    updated_at: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO sweep_cursor (user_id, source, stat_name, stat_value, last_snapshot_ts, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, source, stat_name) DO UPDATE SET
+             stat_value = excluded.stat_value,
+             last_snapshot_ts = excluded.last_snapshot_ts,
+             updated_at = excluded.updated_at",
+    )
+    .bind(user_id)
+    .bind(source)
+    .bind(stat_name)
+    .bind(stat_value)
+    .bind(last_snapshot_ts)
+    .bind(updated_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert or update a sweep cursor row inside an existing SQL transaction.
+pub async fn upsert_sweep_cursor_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    user_id: i64,
+    source: &str,
+    stat_name: &str,
+    stat_value: f64,
+    last_snapshot_ts: &str,
+    updated_at: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO sweep_cursor (user_id, source, stat_name, stat_value, last_snapshot_ts, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, source, stat_name) DO UPDATE SET
+             stat_value = excluded.stat_value,
+             last_snapshot_ts = excluded.last_snapshot_ts,
+             updated_at = excluded.updated_at",
+    )
+    .bind(user_id)
+    .bind(source)
+    .bind(stat_name)
+    .bind(stat_value)
+    .bind(last_snapshot_ts)
+    .bind(updated_at)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }

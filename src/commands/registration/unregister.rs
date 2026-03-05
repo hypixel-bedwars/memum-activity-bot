@@ -36,7 +36,6 @@ pub async fn unregister(ctx: Context<'_>) -> Result<(), Error> {
     if let Some(role_id) = guild_config.registered_role_id {
         let role = serenity::RoleId::new(role_id);
 
-
         let role_exists = ctx
             .guild()
             .map(|g| g.roles.contains_key(&role))
@@ -44,11 +43,11 @@ pub async fn unregister(ctx: Context<'_>) -> Result<(), Error> {
 
         // check role exists in cached guild
         if !role_exists {
-			info!(
-				role_id,
-				guild_id = guild_id_i64,
-				"Registered role not found in guild, skipping role removal"
-			);
+            info!(
+                role_id,
+                guild_id = guild_id_i64,
+                "Registered role not found in guild, skipping role removal"
+            );
             let embed = CreateEmbed::default()
                 .title("Unregistered")
                 .color(0xFFAA00)
@@ -58,8 +57,8 @@ pub async fn unregister(ctx: Context<'_>) -> Result<(), Error> {
                      remove the role manually if desired.",
                 );
             ctx.send(poise::CreateReply::default().embed(embed)).await?;
-			return Ok(());
-		}
+            return Ok(());
+        }
 
         // remove role from the member
         let member = guild_id.member(ctx.http(), ctx.author().id).await?;
@@ -72,7 +71,9 @@ pub async fn unregister(ctx: Context<'_>) -> Result<(), Error> {
     let embed = CreateEmbed::default()
         .title("Unregistered")
         .color(0x00BFFF)
-        .description("You have been successfully unregistered. Your stats will no longer be tracked.");
+        .description(
+            "You have been successfully unregistered. Your stats will no longer be tracked.",
+        );
     ctx.send(poise::CreateReply::default().embed(embed)).await?;
 
     Ok(())

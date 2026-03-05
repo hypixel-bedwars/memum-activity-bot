@@ -1,7 +1,8 @@
 /// Stat sweeper background task.
 ///
-/// - `stat_sweeper` — the sweep logic itself.
-/// - `start_sweeper` — spawns the recurring tokio task.
+/// - `stat_sweeper` - source-specific sweep logic.
+/// - `start_hypixel_sweeper` - Hypixel loop (slow interval).
+/// - `start_discord_sweeper` - Discord loop (fast interval).
 pub mod stat_sweeper;
 
 use std::sync::Arc;
@@ -13,11 +14,8 @@ use tracing::{error, info};
 use crate::config::AppConfig;
 use crate::hypixel::client::HypixelClient;
 
-/// Spawn the stat sweeper as a background tokio task.
-///
-/// The task runs forever, executing a sweep every `interval_seconds` seconds.
-/// Errors during individual sweeps are logged but do not crash the task.
-pub fn start_sweeper(
+/// Spawn the Hypixel sweeper as a background tokio task.
+pub fn start_hypixel_sweeper(
     pool: SqlitePool,
     hypixel: Arc<HypixelClient>,
     interval_seconds: u64,
@@ -26,15 +24,34 @@ pub fn start_sweeper(
     let interval = Duration::from_secs(interval_seconds);
 
     tokio::spawn(async move {
-        info!(interval_secs = interval_seconds, "Stat sweeper started.");
+        info!(interval_secs = interval_seconds, "Hypixel sweeper started.");
 
         loop {
             tokio::time::sleep(interval).await;
 
-            info!("Stat sweeper: starting sweep iteration...");
+            info!("Hypixel sweeper: starting sweep iteration...");
 
-            if let Err(e) = stat_sweeper::run_sweep(&pool, &hypixel, &config).await {
-                error!(error = %e, "Stat sweeper: sweep iteration failed.");
+            if let Err(e) = stat_sweeper::run_hypixel_sweep(&pool, &hypixel, &config).await {
+                error!(error = %e, "Hypixel sweeper: sweep iteration failed.");
+            }
+        }
+    });
+}
+
+/// Spawn the Discord sweeper as a background tokio task.
+pub fn start_discord_sweeper(pool: SqlitePool, interval_seconds: u64, config: AppConfig) {
+    let interval = Duration::from_secs(interval_seconds);
+
+    tokio::spawn(async move {
+        info!(interval_secs = interval_seconds, "Discord sweeper started.");
+
+        loop {
+            tokio::time::sleep(interval).await;
+
+            info!("Discord sweeper: starting sweep iteration...");
+
+            if let Err(e) = stat_sweeper::run_discord_sweep(&pool, &config).await {
+                error!(error = %e, "Discord sweeper: sweep iteration failed.");
             }
         }
     });

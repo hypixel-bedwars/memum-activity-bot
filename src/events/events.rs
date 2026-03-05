@@ -43,7 +43,12 @@ async fn handle_register_button(
     let guild_id = match component.guild_id {
         Some(id) => id,
         None => {
-            respond_ephemeral(ctx, component, "This button can only be used inside a server.").await?;
+            respond_ephemeral(
+                ctx,
+                component,
+                "This button can only be used inside a server.",
+            )
+            .await?;
             return Ok(());
         }
     };
@@ -52,8 +57,16 @@ async fn handle_register_button(
     let member = match guild_id.member(&ctx.http, component.user.id).await {
         Ok(m) => m,
         Err(e) => {
-            warn!("Failed to fetch member {} in guild {}: {}", component.user.id, guild_id, e);
-            respond_ephemeral(ctx, component, "Could not retrieve your server profile. Please try again.").await?;
+            warn!(
+                "Failed to fetch member {} in guild {}: {}",
+                component.user.id, guild_id, e
+            );
+            respond_ephemeral(
+                ctx,
+                component,
+                "Could not retrieve your server profile. Please try again.",
+            )
+            .await?;
             return Ok(());
         }
     };

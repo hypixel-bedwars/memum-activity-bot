@@ -62,3 +62,18 @@ pub struct DbXP {
     pub level: i64,
     pub last_updated: String,
 }
+
+// ---------------------------------------------------------------------------
+// sweep_cursor
+// ---------------------------------------------------------------------------
+
+/// A row from the `sweep_cursor` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbSweepCursor {
+    pub user_id: i64,
+    pub source: String,
+    pub stat_name: String,
+    pub stat_value: f64,
+    pub last_snapshot_ts: String,
+    pub updated_at: String,
+}
