@@ -15,7 +15,7 @@ use crate::config::GuildConfig;
 use crate::database::queries;
 use crate::shared::types::{Context, Error};
 use crate::stats_definitions::{
-    display_name_for_key, BEDWARS_METRICS, BEDWARS_MODES, DISCORD_STATS,
+    BEDWARS_METRICS, BEDWARS_MODES, DISCORD_STATS, display_name_for_key,
 };
 
 // ---------------------------------------------------------------------------
@@ -91,11 +91,10 @@ async fn autocomplete_discord_stat<'a>(
 
 /// Autocomplete for stats already in the guild's `xp_config`.
 /// Used by `/edit-stats edit` and `/edit-stats remove`.
-async fn autocomplete_configured_stat<'a>(ctx: Context<'_>, partial: &'a str) -> Vec<String> {
-    if partial.len() < 2 {
-        return Vec::new();
-    }
-
+async fn autocomplete_configured_stat<'a>(
+    ctx: Context<'_>,
+    partial: &'a str,
+) -> Vec<serenity::AutocompleteChoice> {
     let guild_id = match ctx.guild_id() {
         Some(id) => id.get() as i64,
         None => return Vec::new(),
@@ -107,16 +106,33 @@ async fn autocomplete_configured_stat<'a>(ctx: Context<'_>, partial: &'a str) ->
     };
 
     let partial_lower = partial.to_lowercase();
-    let mut results: Vec<String> = config
+
+    // Build (display_name, raw_key) pairs, filter by partial match on either,
+    // sort by display name, then cap at the Discord limit of 25.
+    let mut results: Vec<(String, String)> = config
         .xp_config
         .keys()
-        .filter(|k| k.to_lowercase().contains(&partial_lower))
-        .cloned()
+        .filter_map(|k| {
+            let display = display_name_for_key(k);
+            let matches = display.to_lowercase().contains(&partial_lower)
+                || k.to_lowercase().contains(&partial_lower);
+            if matches {
+                Some((display, k.clone()))
+            } else {
+                None
+            }
+        })
         .collect();
 
-    results.sort();
+    results.sort_by(|a, b| a.0.cmp(&b.0));
     results.truncate(25);
+
+    // The AutocompleteChoice shows `display` to the user but submits `raw_key`
+    // as the value, so the command handler always receives the exact stat key.
     results
+        .into_iter()
+        .map(|(display, raw_key)| serenity::AutocompleteChoice::new(display, raw_key))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -456,20 +472,10 @@ pub async fn list(ctx: Context<'_>) -> Result<(), Error> {
     // Data rows
     let data_lines: Vec<String> = rows
         .iter()
-        .map(|(d, k, v)| {
-            format!(
-                "{:<col_stat$} | {:<col_key$} | {:>col_xp$.0}",
-                d, k, v,
-            )
-        })
+        .map(|(d, k, v)| format!("{:<col_stat$} | {:<col_key$} | {:>col_xp$.0}", d, k, v,))
         .collect();
 
-    let table = format!(
-        "{}\n{}\n{}",
-        header,
-        sep,
-        data_lines.join("\n"),
-    );
+    let table = format!("{}\n{}\n{}", header, sep, data_lines.join("\n"),);
 
     let embed = CreateEmbed::default()
         .title(format!("XP Stats — {} configured", rows.len()))
