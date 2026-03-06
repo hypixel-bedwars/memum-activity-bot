@@ -27,19 +27,66 @@ impl Default for XPConfig {
     }
 }
 
-/// Convert stat deltas into earned XP and return the total XP.
-pub fn calculate_xp(deltas: &[StatDelta], config: &XPConfig) -> f64 {
-    let mut earned: f64 = 0.0;
+// ---------------------------------------------------------------------------
+// Per-delta XP breakdown
+// ---------------------------------------------------------------------------
+
+/// The XP earned from a single stat delta, along with the multiplier that
+/// was active at calculation time.
+///
+/// Produced by `calculate_xp_rewards` and consumed by `apply_stat_deltas`
+/// when writing `xp_events` rows. Storing `xp_per_unit` in the database
+/// ensures historical XP is never affected by later admin edits to guild
+/// multipliers.
+#[derive(Debug, Clone)]
+pub struct XPReward {
+    pub stat_name: String,
+    /// Integer units derived from `delta.difference.round()`.
+    pub units: i64,
+    /// The multiplier that was active at the time of this sweep.
+    pub xp_per_unit: f64,
+    /// `units * xp_per_unit`.
+    pub xp_earned: f64,
+}
+
+/// Break down a slice of stat deltas into individual `XPReward` entries.
+///
+/// One `XPReward` is produced per delta that has:
+/// - a positive difference (stat increased), and
+/// - a matching entry in `config.rewards`.
+///
+/// Deltas with `difference <= 0` or with an unknown stat name are skipped
+/// entirely — no event row should be written for them.
+pub fn calculate_xp_rewards(deltas: &[StatDelta], config: &XPConfig) -> Vec<XPReward> {
+    let mut rewards = Vec::new();
     for d in deltas {
         if d.difference <= 0.0 {
             continue;
         }
-        if let Some(per_unit) = config.rewards.get(&d.stat_name) {
+        if let Some(&xp_per_unit) = config.rewards.get(&d.stat_name) {
             let units = d.difference.round() as i64;
-            earned += (units as f64) * per_unit;
+            let xp_earned = (units as f64) * xp_per_unit;
+            rewards.push(XPReward {
+                stat_name: d.stat_name.clone(),
+                units,
+                xp_per_unit,
+                xp_earned,
+            });
         }
     }
-    earned
+    rewards
+}
+
+/// Convert stat deltas into earned XP and return the total XP.
+///
+/// This is a thin convenience wrapper around `calculate_xp_rewards` that
+/// sums the individual rewards. Kept for backwards-compatibility with
+/// existing tests and any call-site that only needs the aggregate.
+pub fn calculate_xp(deltas: &[StatDelta], config: &XPConfig) -> f64 {
+    calculate_xp_rewards(deltas, config)
+        .iter()
+        .map(|r| r.xp_earned)
+        .sum()
 }
 
 /// Returns the *cumulative* XP threshold required to reach `level`.

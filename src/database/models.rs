@@ -145,6 +145,49 @@ pub struct MilestoneWithCount {
 }
 
 // ---------------------------------------------------------------------------
+// stat_deltas
+// ---------------------------------------------------------------------------
+
+/// A row from the `stat_deltas` table.
+///
+/// Inserted once per positive stat change detected by a sweeper. Immutable
+/// after creation — never updated.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbStatDelta {
+    pub id: i64,
+    pub user_id: i64,
+    pub stat_name: String,
+    pub old_value: f64,
+    pub new_value: f64,
+    pub delta: f64,
+    /// The sweeper source that produced this delta (e.g. `"hypixel"`, `"discord"`).
+    pub source: String,
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// xp_events
+// ---------------------------------------------------------------------------
+
+/// A row from the `xp_events` table.
+///
+/// Records exactly how much XP was awarded for a single `stat_deltas` row,
+/// including the multiplier that was active at the time. Immutable after
+/// creation — admin edits to guild multipliers do not affect historical rows.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbXPEvent {
+    pub id: i64,
+    pub user_id: i64,
+    pub stat_name: String,
+    /// FK → `stat_deltas.id`.
+    pub delta_id: i64,
+    pub units: i32,
+    pub xp_per_unit: f64,
+    pub xp_earned: f64,
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // Message Validation
 // ---------------------------------------------------------------------------
 

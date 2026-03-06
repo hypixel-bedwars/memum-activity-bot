@@ -11,7 +11,7 @@ use crate::database::queries;
 use crate::level_card::{self, LevelCardParams};
 use crate::shared::types::{Context, Error};
 use crate::stats_definitions::{display_name_for_key, is_discord_stat};
-use crate::xp::calculator::{calculate_level, xp_for_level};
+use crate::xp::calculator::xp_for_level;
 
 /// Fetch the player's Crafatar face avatar (80×80 px).
 /// Non-fatal — returns `None` on any error.
@@ -73,15 +73,16 @@ pub async fn level(
 
     // ── XP & level data ───────────────────────────────────────────────────────
     let xp_row = queries::get_xp(&data.db, db_user.id).await?;
-    #[allow(unused_variables)]
-    let (total_xp, last_updated) = xp_row
+    // Read both total_xp and the level stored by the pipeline.
+    // The pipeline writes the correct level inside every transaction, so we
+    // never need to recalculate it here.
+    let (total_xp, level) = xp_row
         .as_ref()
-        .map(|x| (x.total_xp, x.last_updated.clone()))
-        .unwrap_or_else(|| (0.0, chrono::Utc::now()));
+        .map(|x| (x.total_xp, x.level))
+        .unwrap_or((0.0, 1));
 
     let base_xp = data.config.base_level_xp;
     let exponent = data.config.level_exponent;
-    let level = calculate_level(total_xp, base_xp, exponent);
 
     let xp_at_level = xp_for_level(level, base_xp, exponent);
     let xp_at_next = xp_for_level(level + 1, base_xp, exponent);
@@ -101,10 +102,11 @@ pub async fn level(
         keys
     };
 
-    // ── compute stat deltas since last sweep ──────────────────────────────────
-    // "since last sweep" = latest snapshot − snapshot just before `last_updated`
+    // ── compute stat deltas since registration ────────────────────────────────
+    // "since registration" = latest snapshot − initial (registration-time) snapshot.
+    // These are shown purely for cosmetic display on the level card.
+    // XP is NOT recalculated here — it comes from the pipeline (xp.total_xp above).
     let mut stat_deltas: Vec<(String, f64)> = Vec::new();
-    let mut xp_gained: f64 = 0.0;
 
     for key in &active_keys {
         let (latest_val, initial_val) = if is_discord_stat(key) {
@@ -136,11 +138,14 @@ pub async fn level(
         let delta = (latest_val - initial_val).max(0.0);
 
         if delta > 0.0 {
-            let per_unit = guild_config.xp_config.get(key).copied().unwrap_or(0.0);
-            xp_gained += delta.round() * per_unit;
             stat_deltas.push((display_name_for_key(key), delta));
         }
     }
+
+    // xp_gained is the canonical total maintained by the sweeper pipeline.
+    // We never recalculate it from snapshot deltas and current multipliers,
+    // because that would produce wrong results when admins edit multipliers.
+    let xp_gained = total_xp;
 
     // Keep at most 8 deltas, sorted by delta descending.
     stat_deltas.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

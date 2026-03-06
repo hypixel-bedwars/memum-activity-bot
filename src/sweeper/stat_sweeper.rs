@@ -153,6 +153,7 @@ async fn sweep_hypixel_user(
         &deltas,
         &[],
         &now,
+        "hypixel",
         "Hypixel sweep",
     )
     .await
@@ -217,12 +218,27 @@ async fn sweep_discord_user(pool: &PgPool, user: &DbUser, config: &AppConfig) ->
         &deltas,
         &cursor_updates,
         &now,
+        "discord",
         "Discord sweep",
     )
     .await
 }
 
 /// Shared XP pipeline used by both source-specific sweepers.
+///
+/// For every positive-delta stat:
+///   1. Inserts a `stat_deltas` row (permanent audit record).
+///   2. If the stat has a configured multiplier, inserts an `xp_events` row
+///      containing the multiplier value *at this point in time*. This means
+///      historical XP is never affected by later admin edits to guild config.
+///   3. Accumulates the total XP earned and atomically increments
+///      `xp.total_xp` once at the end of the transaction.
+///
+/// Negative or zero deltas produce no rows in either audit table.
+///
+/// `source` is a short machine-readable tag stored in `stat_deltas.source`
+/// (e.g. `"hypixel"`, `"discord"`).
+/// `source_label` is a human-readable string used only in log messages.
 async fn apply_stat_deltas(
     pool: &PgPool,
     user: &DbUser,
@@ -231,12 +247,25 @@ async fn apply_stat_deltas(
     deltas: &[StatDelta],
     cursor_updates: &[CursorUpdate],
     now: &DateTime<Utc>,
+    source: &str,
     source_label: &str,
 ) -> Result<()> {
     let xp_cfg = XPConfig::new(guild_config.xp_config.clone());
-    let earned = calculator::calculate_xp(deltas, &xp_cfg);
 
-    if earned <= 0.0 && cursor_updates.is_empty() {
+    // Compute per-delta XP rewards up-front so we can do an early return
+    // when there is truly nothing to do (no positive deltas with a
+    // configured multiplier AND no cursor updates to flush).
+    let rewards = calculator::calculate_xp_rewards(deltas, &xp_cfg);
+    let total_earned: f64 = rewards.iter().map(|r| r.xp_earned).sum();
+
+    // Filter to deltas that are positive — these get a stat_deltas row
+    // regardless of whether they have an XP multiplier configured.
+    let positive_deltas: Vec<&StatDelta> = deltas
+        .iter()
+        .filter(|d| d.difference > 0.0)
+        .collect();
+
+    if positive_deltas.is_empty() && cursor_updates.is_empty() {
         return Ok(());
     }
 
@@ -246,9 +275,51 @@ async fn apply_stat_deltas(
 
     let mut tx = pool.begin().await?;
 
-    // Atomic XP increment protects against lost updates when multiple sweeper
-    // loops process the same user concurrently.
-    if earned > 0.0 {
+    // ------------------------------------------------------------------
+    // 1. Write stat_deltas + xp_events for every positive delta.
+    // ------------------------------------------------------------------
+    // Build a lookup of XPReward by stat_name so we can pair rewards with
+    // their corresponding delta row in a single pass.
+    let reward_by_stat: std::collections::HashMap<&str, &crate::xp::calculator::XPReward> =
+        rewards.iter().map(|r| (r.stat_name.as_str(), r)).collect();
+
+    for delta in &positive_deltas {
+        let delta_id = queries::insert_stat_delta_in_tx(
+            &mut tx,
+            user.id,
+            &delta.stat_name,
+            delta.old_value,
+            delta.new_value,
+            delta.difference,
+            source,
+            now,
+        )
+        .await?;
+
+        // Only write an xp_events row when a multiplier is configured for
+        // this stat. Unknown stats are still recorded in stat_deltas for
+        // auditability but award no XP.
+        if let Some(reward) = reward_by_stat.get(delta.stat_name.as_str()) {
+            queries::insert_xp_event_in_tx(
+                &mut tx,
+                user.id,
+                &delta.stat_name,
+                delta_id,
+                reward.units as i32,
+                reward.xp_per_unit,
+                reward.xp_earned,
+                now,
+            )
+            .await?;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 2. Atomically increment xp.total_xp and recalculate level.
+    // ------------------------------------------------------------------
+    if total_earned > 0.0 {
+        // Atomic XP increment protects against lost updates when multiple
+        // sweeper loops process the same user concurrently.
         sqlx::query(
             "INSERT INTO xp (user_id, total_xp, last_updated)
          VALUES ($1, $2, $3)
@@ -257,7 +328,7 @@ async fn apply_stat_deltas(
              last_updated = excluded.last_updated",
         )
         .bind(user.id)
-        .bind(earned)
+        .bind(total_earned)
         .bind(now)
         .execute(&mut *tx)
         .await?;
@@ -288,7 +359,7 @@ async fn apply_stat_deltas(
 
         debug!(
             user_id = user.id,
-            earned,
+            earned = total_earned,
             total_xp = xp_row.total_xp,
             level = new_level,
             source = source_label,
@@ -311,6 +382,9 @@ async fn apply_stat_deltas(
         }
     }
 
+    // ------------------------------------------------------------------
+    // 3. Flush cursor updates (Discord sweeper only).
+    // ------------------------------------------------------------------
     for cursor in cursor_updates {
         queries::upsert_sweep_cursor_in_tx(
             &mut tx,
@@ -553,6 +627,7 @@ mod tests {
             &deltas_a,
             &[],
             &binding,
+            "test",
             "Test A",
         );
         let binding = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 10, 0).unwrap();
@@ -564,6 +639,7 @@ mod tests {
             &deltas_b,
             &[],
             &binding,
+            "test",
             "Test B",
         );
 
@@ -576,5 +652,176 @@ mod tests {
             .expect("xp query should succeed")
             .expect("xp row should exist");
         assert_eq!(xp.total_xp, 10.0);
+    }
+
+    /// Verify that `apply_stat_deltas` writes one `stat_deltas` row per
+    /// positive delta and that all fields are stored correctly.
+    #[tokio::test]
+    async fn apply_stat_deltas_writes_stat_delta_rows() {
+        let pool = test_pool().await;
+        let config = test_app_config();
+        let user = setup_user_with_discord_xp_stat(&pool).await;
+
+        let mut guild_cfg = GuildConfig::default();
+        guild_cfg.xp_config = HashMap::new();
+        guild_cfg.xp_config.insert("messages_sent".to_string(), 2.0);
+
+        let now = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let deltas = vec![StatDelta::new(
+            user.id,
+            "messages_sent".to_string(),
+            10.0,
+            15.0,
+        )];
+
+        apply_stat_deltas(
+            &pool,
+            &user,
+            &guild_cfg,
+            &config,
+            &deltas,
+            &[],
+            &now,
+            "test",
+            "Test",
+        )
+        .await
+        .expect("apply_stat_deltas should succeed");
+
+        // Verify stat_deltas row
+        let rows = sqlx::query_as::<_, crate::database::models::DbStatDelta>(
+            "SELECT * FROM stat_deltas WHERE user_id = $1",
+        )
+        .bind(user.id)
+        .fetch_all(&pool)
+        .await
+        .expect("stat_deltas query should succeed");
+
+        assert_eq!(rows.len(), 1, "expected one stat_deltas row");
+        let row = &rows[0];
+        assert_eq!(row.stat_name, "messages_sent");
+        assert_eq!(row.old_value, 10.0);
+        assert_eq!(row.new_value, 15.0);
+        assert_eq!(row.delta, 5.0);
+        assert_eq!(row.source, "test");
+    }
+
+    /// Verify that `apply_stat_deltas` writes one `xp_events` row per
+    /// positive delta that has a configured multiplier, and that the
+    /// multiplier value captured in the row is the one active at sweep time.
+    #[tokio::test]
+    async fn apply_stat_deltas_writes_xp_event_with_correct_multiplier() {
+        let pool = test_pool().await;
+        let config = test_app_config();
+        let user = setup_user_with_discord_xp_stat(&pool).await;
+
+        let multiplier = 3.0_f64;
+        let mut guild_cfg = GuildConfig::default();
+        guild_cfg.xp_config = HashMap::new();
+        guild_cfg.xp_config.insert("messages_sent".to_string(), multiplier);
+
+        let now = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        // delta = 4 units → 4 * 3.0 = 12 XP
+        let deltas = vec![StatDelta::new(
+            user.id,
+            "messages_sent".to_string(),
+            0.0,
+            4.0,
+        )];
+
+        apply_stat_deltas(
+            &pool,
+            &user,
+            &guild_cfg,
+            &config,
+            &deltas,
+            &[],
+            &now,
+            "test",
+            "Test",
+        )
+        .await
+        .expect("apply_stat_deltas should succeed");
+
+        // Verify xp_events row
+        let events = sqlx::query_as::<_, crate::database::models::DbXPEvent>(
+            "SELECT * FROM xp_events WHERE user_id = $1",
+        )
+        .bind(user.id)
+        .fetch_all(&pool)
+        .await
+        .expect("xp_events query should succeed");
+
+        assert_eq!(events.len(), 1, "expected one xp_events row");
+        let ev = &events[0];
+        assert_eq!(ev.stat_name, "messages_sent");
+        assert_eq!(ev.units, 4);
+        assert_eq!(ev.xp_per_unit, multiplier);
+        assert_eq!(ev.xp_earned, 12.0);
+
+        // Verify delta_id FK links back to the stat_deltas row
+        let delta_rows = sqlx::query_as::<_, crate::database::models::DbStatDelta>(
+            "SELECT * FROM stat_deltas WHERE id = $1",
+        )
+        .bind(ev.delta_id)
+        .fetch_all(&pool)
+        .await
+        .expect("stat_deltas FK query should succeed");
+        assert_eq!(delta_rows.len(), 1, "xp_events.delta_id should reference a stat_deltas row");
+
+        // Verify xp.total_xp was also updated
+        let xp = queries::get_xp(&pool, user.id)
+            .await
+            .expect("xp query should succeed")
+            .expect("xp row should exist");
+        assert_eq!(xp.total_xp, 12.0);
+    }
+
+    /// Verify that `apply_stat_deltas` recalculates and stores the correct
+    /// level in `xp.level` when earned XP crosses a level threshold.
+    ///
+    /// Config: base_level_xp = 100, exponent = 1.5  →  level 2 requires 100 XP.
+    /// Awarding 100 units of `messages_sent` at 1 XP/unit = 100 XP total
+    /// should advance the user from level 1 to level 2.
+    #[tokio::test]
+    async fn apply_stat_deltas_level_recalculates_after_xp() {
+        let pool = test_pool().await;
+        let config = test_app_config(); // base_level_xp=100, level_exponent=1.5
+        let user = setup_user_with_discord_xp_stat(&pool).await;
+
+        let mut guild_cfg = GuildConfig::default();
+        guild_cfg.xp_config = HashMap::new();
+        guild_cfg.xp_config.insert("messages_sent".to_string(), 1.0);
+
+        let now = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        // 100 units * 1 XP/unit = 100 XP, which is exactly the threshold for level 2.
+        let deltas = vec![StatDelta::new(
+            user.id,
+            "messages_sent".to_string(),
+            0.0,
+            100.0,
+        )];
+
+        apply_stat_deltas(
+            &pool,
+            &user,
+            &guild_cfg,
+            &config,
+            &deltas,
+            &[],
+            &now,
+            "test",
+            "Test",
+        )
+        .await
+        .expect("apply_stat_deltas should succeed");
+
+        let xp = queries::get_xp(&pool, user.id)
+            .await
+            .expect("xp query should succeed")
+            .expect("xp row should exist");
+
+        assert_eq!(xp.total_xp, 100.0, "total_xp should be 100");
+        assert_eq!(xp.level, 2, "level should advance to 2 after earning 100 XP");
     }
 }

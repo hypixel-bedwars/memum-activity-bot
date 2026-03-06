@@ -234,12 +234,8 @@ pub async fn perform_registration(
         "Inserted initial Discord stat snapshots"
     );
 
-    queries::upsert_xp(&data.db, db_user.id, 0.0, now).await?;
-
-    debug!(
-        db_user_id = db_user.id,
-        "Initialized XP record"
-    );
+    // XP row is created on first sweep via INSERT ... ON CONFLICT DO UPDATE
+    // inside apply_stat_deltas. No seed row needed at registration time.
 
     info!(
         discord_user_id,

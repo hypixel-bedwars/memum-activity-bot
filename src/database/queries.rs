@@ -11,7 +11,7 @@ use tracing::debug;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use super::models::{DbGuild, DbMilestone, DbPersistentLeaderboard, DbStatsSnapshot, DbSweepCursor, DbUser, DbXP, LeaderboardEntry, MilestoneWithCount};
+use super::models::{DbGuild, DbMilestone, DbPersistentLeaderboard, DbStatDelta, DbStatsSnapshot, DbSweepCursor, DbUser, DbXP, LeaderboardEntry, MilestoneWithCount};
 
 // =========================================================================
 // guilds
@@ -392,31 +392,15 @@ pub async fn get_latest_discord_snapshots_for_user(
 // xp
 // =========================================================================
 
-/// Insert or update XP for a user. Adds the given `xp_to_add` to the
-/// existing total (or creates a new row starting from zero).
-pub async fn upsert_xp(
-    pool: &PgPool,
-    user_id: i64,
-    xp_to_add: f64,
-    timestamp: DateTime<Utc>,
-) -> Result<(), sqlx::Error> {
-    debug!("queries::upsert_xp: user_id={}, xp_to_add={}, timestamp={}", user_id, xp_to_add, timestamp);
-    sqlx::query(
-        "INSERT INTO xp (user_id, total_xp, last_updated)
-         VALUES ($1, $2, $3)
-         ON CONFLICT(user_id) DO UPDATE SET
-             total_xp = xp.total_xp + excluded.total_xp,
-             last_updated = excluded.last_updated",
-    )
-    .bind(user_id)
-    .bind(xp_to_add)
-    .bind(timestamp)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Set the XP total and level for a user (used after computing new totals).
+/// Set the XP total and level for a user.
+///
+/// # Test-only seeding
+///
+/// This is an **absolute setter** — it replaces `total_xp` and `level`
+/// entirely rather than incrementing them.  It must **not** be called from
+/// production code; use the `apply_stat_deltas` pipeline in
+/// `src/sweeper/stat_sweeper.rs` instead.  This function exists solely to
+/// seed deterministic state in integration tests.
 pub async fn set_xp_and_level(
     pool: &PgPool,
     user_id: i64,
@@ -781,6 +765,84 @@ pub async fn get_milestones(
     .bind(guild_id)
     .fetch_all(pool)
     .await
+}
+
+// =========================================================================
+// stat_deltas
+// =========================================================================
+
+/// Insert a stat delta row inside an existing transaction and return its
+/// auto-generated `id`. The returned id must be passed to
+/// `insert_xp_event_in_tx` so the XP event can reference this row.
+pub async fn insert_stat_delta_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i64,
+    stat_name: &str,
+    old_value: f64,
+    new_value: f64,
+    delta: f64,
+    source: &str,
+    created_at: &DateTime<Utc>,
+) -> Result<i64, sqlx::Error> {
+    debug!(
+        "queries::insert_stat_delta_in_tx: user_id={}, stat_name={}, delta={}, source={}",
+        user_id, stat_name, delta, source
+    );
+    let row = sqlx::query_as::<_, DbStatDelta>(
+        "INSERT INTO stat_deltas (user_id, stat_name, old_value, new_value, delta, source, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *",
+    )
+    .bind(user_id)
+    .bind(stat_name)
+    .bind(old_value)
+    .bind(new_value)
+    .bind(delta)
+    .bind(source)
+    .bind(created_at)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(row.id)
+}
+
+// =========================================================================
+// xp_events
+// =========================================================================
+
+/// Insert an XP event row inside an existing transaction.
+///
+/// `delta_id` must reference a row that was already inserted in the same
+/// transaction via `insert_stat_delta_in_tx`. The `xp_per_unit` value must
+/// be the multiplier that was active at sweep time so that historical XP
+/// is never affected by later admin edits to guild config.
+pub async fn insert_xp_event_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i64,
+    stat_name: &str,
+    delta_id: i64,
+    units: i32,
+    xp_per_unit: f64,
+    xp_earned: f64,
+    created_at: &DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    debug!(
+        "queries::insert_xp_event_in_tx: user_id={}, stat_name={}, delta_id={}, units={}, xp_per_unit={}, xp_earned={}",
+        user_id, stat_name, delta_id, units, xp_per_unit, xp_earned
+    );
+    sqlx::query(
+        "INSERT INTO xp_events (user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(user_id)
+    .bind(stat_name)
+    .bind(delta_id)
+    .bind(units)
+    .bind(xp_per_unit)
+    .bind(xp_earned)
+    .bind(created_at)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// Retrieve all milestones for a guild together with the count of users who
