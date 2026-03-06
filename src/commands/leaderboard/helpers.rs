@@ -3,7 +3,7 @@
 /// Provides a helper that queries the database, fetches avatars, and renders
 /// a leaderboard page image. Used by both the `/leaderboard` user command and
 /// the persistent leaderboard background updater.
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::database::queries;
 use crate::leaderboard_card::{self, LeaderboardCardParams, LeaderboardRow, MilestoneEntry};
@@ -15,7 +15,7 @@ pub const PAGE_SIZE: i64 = 10;
 ///
 /// Returns `(png_bytes, total_pages)`.
 pub async fn generate_leaderboard_page(
-    pool: &SqlitePool,
+    pool: &PgPool,
     guild_id: i64,
     page: u32,
 ) -> Result<(Vec<u8>, u32), Box<dyn std::error::Error + Send + Sync>> {

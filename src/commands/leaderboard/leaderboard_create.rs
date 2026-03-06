@@ -49,7 +49,7 @@ pub async fn leaderboard_create(
         queries::get_persistent_leaderboard(&ctx.data().db, guild_id.get() as i64).await?
     {
         // Try to clean up old messages
-        let old_msg_ids: Vec<u64> = serde_json::from_str(&existing.message_ids).unwrap_or_default();
+        let old_msg_ids: Vec<u64> = serde_json::from_value(existing.message_ids.clone()).unwrap_or_default();
         let old_channel = serenity::ChannelId::new(existing.channel_id as u64);
         for msg_id in old_msg_ids {
             let _ = old_channel
@@ -105,8 +105,8 @@ pub async fn leaderboard_create(
     let status_message_id = status_msg.id.get();
 
     // Store in database
-    let now = now_rfc3339();
-    let message_ids_json = serde_json::to_string(&message_ids)?;
+    let now = chrono::Utc::now();
+    let message_ids_json = serde_json::json!(message_ids);
 
     queries::upsert_persistent_leaderboard(
         &ctx.data().db,
@@ -142,10 +142,4 @@ pub async fn leaderboard_create(
     // -# This is the last updated date of the most outdated player data. Data for any player can be updated using the /tournament command.
 
     Ok(())
-}
-
-fn now_rfc3339() -> String {
-    time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "unknown".to_string())
 }

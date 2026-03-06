@@ -45,7 +45,7 @@ pub async fn set_register_role(
     let guild_row = queries::get_guild(&data.db, guild_id_i64).await?;
     let mut guild_config: GuildConfig = guild_row
         .as_ref()
-        .map(|g| serde_json::from_str(&g.config_json).unwrap_or_default())
+        .and_then(|g| serde_json::from_value(g.config_json.clone()).ok())
         .unwrap_or_default();
 
     guild_config.registered_role_id = Some(role.id.get());
@@ -53,8 +53,8 @@ pub async fn set_register_role(
         "Setting registration role for guild {} to {} (ID {})",
         guild_id, role.name, role.id
     );
-    let config_json = serde_json::to_string(&guild_config)?;
-    queries::update_guild_config(&data.db, guild_id_i64, &config_json).await?;
+    let config_json = serde_json::to_value(&guild_config)?;
+    queries::update_guild_config(&data.db, guild_id_i64, config_json).await?;
 
     let embed = CreateEmbed::default()
         .title("Registration Role Updated")

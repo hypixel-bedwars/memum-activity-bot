@@ -42,7 +42,7 @@ pub async fn leaderboard_remove(ctx: Context<'_>) -> Result<(), Error> {
     match existing {
         Some(lb) => {
             // Try to delete the messages
-            let msg_ids: Vec<u64> = serde_json::from_str(&lb.message_ids).unwrap_or_default();
+            let msg_ids: Vec<u64> = serde_json::from_value(lb.message_ids.clone()).unwrap_or_default();
             let channel_id = serenity::ChannelId::new(lb.channel_id as u64);
 
             let mut deleted = 0;

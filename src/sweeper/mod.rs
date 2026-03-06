@@ -8,7 +8,7 @@ pub mod stat_sweeper;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use tracing::{debug, error, info};
 
 use crate::config::AppConfig;
@@ -16,7 +16,7 @@ use crate::hypixel::client::HypixelClient;
 
 /// Spawn the Hypixel sweeper as a background tokio task.
 pub fn start_hypixel_sweeper(
-    pool: SqlitePool,
+    pool: PgPool,
     hypixel: Arc<HypixelClient>,
     interval_seconds: u64,
     config: AppConfig,
@@ -39,7 +39,7 @@ pub fn start_hypixel_sweeper(
 }
 
 /// Spawn the Discord sweeper as a background tokio task.
-pub fn start_discord_sweeper(pool: SqlitePool, interval_seconds: u64, config: AppConfig) {
+pub fn start_discord_sweeper(pool: PgPool, interval_seconds: u64, config: AppConfig) {
     let interval = Duration::from_secs(interval_seconds);
 
     tokio::spawn(async move {

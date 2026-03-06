@@ -65,7 +65,7 @@ pub struct LeaderboardRow {
     /// Display name (Minecraft username preferred, Discord fallback).
     pub username: String,
     /// Level number.
-    pub level: i64,
+    pub level: i32,
     /// Total XP.
     pub total_xp: f64,
     /// Raw avatar PNG/JPEG bytes, or `None` for a placeholder.
@@ -75,7 +75,7 @@ pub struct LeaderboardRow {
 /// A single milestone entry with its reach count.
 pub struct MilestoneEntry {
     /// The level threshold for this milestone.
-    pub level: i64,
+    pub level: i32,
     /// Number of users in the guild who have reached this level or higher.
     pub user_count: i64,
 }

@@ -65,7 +65,7 @@ pub async fn milestone(_ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, ephemeral)]
 pub async fn add(
     ctx: Context<'_>,
-    #[description = "The level threshold for this milestone (e.g. 25, 50, 100)"] level: i64,
+    #[description = "The level threshold for this milestone (e.g. 25, 50, 100)"] level: i32,
 ) -> Result<(), Error> {
     if !is_admin(&ctx) {
         ctx.send(
@@ -126,7 +126,7 @@ pub async fn edit(
     #[description = "The current milestone level to edit"]
     #[autocomplete = "autocomplete_existing_milestone"]
     current_level: String,
-    #[description = "The new level for this milestone"] new_level: i64,
+    #[description = "The new level for this milestone"] new_level: i32,
 ) -> Result<(), Error> {
     if !is_admin(&ctx) {
         ctx.send(
@@ -138,7 +138,7 @@ pub async fn edit(
         return Ok(());
     }
 
-    let parsed_current: i64 = match current_level.trim().parse() {
+    let parsed_current: i32 = match current_level.trim().parse() {
         Ok(v) => v,
         Err(_) => {
             ctx.send(
@@ -256,7 +256,7 @@ pub async fn remove(
         return Ok(());
     }
 
-    let parsed_level: i64 = match level.trim().parse() {
+    let parsed_level: i32 = match level.trim().parse() {
         Ok(v) => v,
         Err(_) => {
             ctx.send(

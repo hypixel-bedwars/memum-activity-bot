@@ -23,7 +23,7 @@ pub async fn unregister(ctx: Context<'_>) -> Result<(), Error> {
         .ok_or("Guild configuration not found. Ask an admin to configure the bot.")?;
 
     let guild_config: GuildConfig =
-        serde_json::from_str(&guild_row.config_json).unwrap_or_default();
+        serde_json::from_value(guild_row.config_json.clone()).unwrap_or_default();
 
     queries::unregister_user(&data.db, discord_user_id, guild_id_i64).await?;
 

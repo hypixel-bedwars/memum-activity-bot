@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use sqlx::SqlitePool;
-use time::OffsetDateTime;
+use chrono::{DateTime, Utc};
+use sqlx::PgPool;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{AppConfig, GuildConfig};
@@ -30,12 +30,12 @@ struct CursorUpdate {
     source: &'static str,
     stat_name: String,
     stat_value: f64,
-    last_snapshot_ts: String,
+    last_snapshot_ts: DateTime<Utc>,
 }
 
 /// Run a single Hypixel sweep iteration for all registered users.
 pub async fn run_hypixel_sweep(
-    pool: &SqlitePool,
+    pool: &PgPool,
     hypixel: &Arc<HypixelClient>,
     config: &AppConfig,
 ) -> Result<()> {
@@ -67,7 +67,7 @@ pub async fn run_hypixel_sweep(
 }
 
 /// Run a single Discord sweep iteration for all registered users.
-pub async fn run_discord_sweep(pool: &SqlitePool, config: &AppConfig) -> Result<()> {
+pub async fn run_discord_sweep(pool: &PgPool, config: &AppConfig) -> Result<()> {
     let users = queries::get_all_registered_users(pool).await?;
 
     if users.is_empty() {
@@ -97,7 +97,7 @@ pub async fn run_discord_sweep(pool: &SqlitePool, config: &AppConfig) -> Result<
 
 /// Sweep one user's Hypixel stats.
 async fn sweep_hypixel_user(
-    pool: &SqlitePool,
+    pool: &PgPool,
     hypixel: &Arc<HypixelClient>,
     user: &DbUser,
     config: &AppConfig,
@@ -106,7 +106,7 @@ async fn sweep_hypixel_user(
     let player_data = hypixel.fetch_player(&user.minecraft_uuid).await?;
     let bw = &player_data.bedwars;
 
-    let now = now_rfc3339();
+    let now = chrono::Utc::now();
     let guild_config = load_guild_config(pool, user.guild_id).await;
 
     let mut deltas: Vec<StatDelta> = Vec::new();
@@ -123,15 +123,16 @@ async fn sweep_hypixel_user(
 
         let previous = queries::get_latest_hypixel_snapshot(pool, user.id, stat_name).await?;
 
+        let time_now = chrono::Utc::now();
         // If this stat has no snapshots yet, seed a baseline and skip XP for now.
         if previous.is_none() {
-            queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, &now).await?;
+            queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, time_now).await?;
             continue;
         }
 
         let old_value = previous.as_ref().map(|s| s.stat_value).unwrap_or(0.0);
 
-        queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, &now).await?;
+        queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, time_now).await?;
 
         let diff = new_value - old_value;
         if diff.abs() > f64::EPSILON {
@@ -158,8 +159,8 @@ async fn sweep_hypixel_user(
 }
 
 /// Sweep one user's Discord stats using cursor checkpoints.
-async fn sweep_discord_user(pool: &SqlitePool, user: &DbUser, config: &AppConfig) -> Result<()> {
-    let now = now_rfc3339();
+async fn sweep_discord_user(pool: &PgPool, user: &DbUser, config: &AppConfig) -> Result<()> {
+    let now = chrono::Utc::now();
     let guild_config = load_guild_config(pool, user.guild_id).await;
     let xp_row = queries::get_xp(pool, user.id).await?;
 
@@ -223,13 +224,13 @@ async fn sweep_discord_user(pool: &SqlitePool, user: &DbUser, config: &AppConfig
 
 /// Shared XP pipeline used by both source-specific sweepers.
 async fn apply_stat_deltas(
-    pool: &SqlitePool,
+    pool: &PgPool,
     user: &DbUser,
     guild_config: &GuildConfig,
     config: &AppConfig,
     deltas: &[StatDelta],
     cursor_updates: &[CursorUpdate],
-    now: &str,
+    now: &DateTime<Utc>,
     source_label: &str,
 ) -> Result<()> {
     let xp_cfg = XPConfig::new(guild_config.xp_config.clone());
@@ -241,7 +242,7 @@ async fn apply_stat_deltas(
 
     // Track whether a level-up occurred so we can fire the milestone hook
     // after the transaction commits (avoiding any DB access inside the tx).
-    let mut level_up: Option<(i64, i64)> = None; // (old_level, new_level)
+    let mut level_up: Option<(i32, i32)> = None; // (old_level, new_level)
 
     let mut tx = pool.begin().await?;
 
@@ -250,10 +251,10 @@ async fn apply_stat_deltas(
     if earned > 0.0 {
         sqlx::query(
             "INSERT INTO xp (user_id, total_xp, last_updated)
-             VALUES (?, ?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET
-                 total_xp = xp.total_xp + excluded.total_xp,
-                 last_updated = excluded.last_updated",
+         VALUES ($1, $2, $3)
+         ON CONFLICT(user_id) DO UPDATE SET
+             total_xp = xp.total_xp + excluded.total_xp,
+             last_updated = excluded.last_updated",
         )
         .bind(user.id)
         .bind(earned)
@@ -262,7 +263,7 @@ async fn apply_stat_deltas(
         .await?;
 
         let xp_row = sqlx::query_as::<_, crate::database::models::DbXP>(
-            "SELECT * FROM xp WHERE user_id = ?",
+            "SELECT * FROM xp WHERE user_id = $1",
         )
         .bind(user.id)
         .fetch_optional(&mut *tx)
@@ -274,10 +275,10 @@ async fn apply_stat_deltas(
             xp_row.total_xp,
             config.base_level_xp,
             config.level_exponent,
-        ) as i64;
+        ) as i32;
 
         if new_level != old_level {
-            sqlx::query("UPDATE xp SET level = ?, last_updated = ? WHERE user_id = ?")
+            sqlx::query("UPDATE xp SET level = $1, last_updated = $2 WHERE user_id = $3")
                 .bind(new_level)
                 .bind(now)
                 .bind(user.id)
@@ -342,11 +343,7 @@ async fn apply_stat_deltas(
                     milestone_level = m.level,
                     "Milestone reached — calling handle_milestone_reached."
                 );
-                milestones::handle_milestone_reached(
-                    user.discord_user_id as u64,
-                    m.level,
-                )
-                .await;
+                milestones::handle_milestone_reached(user.discord_user_id as u64, m.level).await;
             }
         }
     }
@@ -360,7 +357,7 @@ async fn apply_stat_deltas(
 /// current XP `last_updated` timestamp. This preserves existing rollout
 /// semantics and avoids retroactive XP spikes.
 async fn bootstrap_discord_old_value(
-    pool: &SqlitePool,
+    pool: &PgPool,
     user_id: i64,
     stat_name: &str,
     xp_row: Option<&DbXP>,
@@ -376,14 +373,14 @@ async fn bootstrap_discord_old_value(
 
 /// Get the Discord stat value that was current at or before a given timestamp.
 async fn get_discord_value_at_time(
-    pool: &SqlitePool,
+    pool: &PgPool,
     user_id: i64,
     stat_name: &str,
-    timestamp: &str,
+    timestamp: &DateTime<Utc>,
 ) -> Option<f64> {
     sqlx::query_scalar::<_, f64>(
         "SELECT stat_value FROM discord_stats_snapshot
-         WHERE user_id = ? AND stat_name = ? AND timestamp <= ?
+         WHERE user_id = $1 AND stat_name = $2 AND timestamp <= $3
          ORDER BY timestamp DESC
          LIMIT 1",
     )
@@ -395,16 +392,10 @@ async fn get_discord_value_at_time(
     .ok()?
 }
 
-fn now_rfc3339() -> String {
-    OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "unknown".to_string())
-}
-
 /// Load and parse the guild config, falling back to defaults on error.
-async fn load_guild_config(pool: &SqlitePool, guild_id: i64) -> GuildConfig {
+async fn load_guild_config(pool: &PgPool, guild_id: i64) -> GuildConfig {
     match queries::get_guild(pool, guild_id).await {
-        Ok(Some(guild)) => serde_json::from_str(&guild.config_json).unwrap_or_default(),
+        Ok(Some(guild)) => serde_json::from_value(guild.config_json.clone()).unwrap_or_default(),
         Ok(None) => GuildConfig::default(),
         Err(e) => {
             error!(guild_id, error = %e, "Failed to load guild config, using defaults.");
@@ -417,6 +408,9 @@ async fn load_guild_config(pool: &SqlitePool, guild_id: i64) -> GuildConfig {
 mod tests {
     use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use chrono::{TimeZone, Utc};
+    use uuid::Uuid;
 
     use super::*;
     use crate::database;
@@ -434,11 +428,11 @@ mod tests {
             leaderboard_cache_seconds: 60,
             persistent_leaderboard_players: 10,
             min_message_length: 5,
-			message_cooldown_seconds: 30,
+            message_cooldown_seconds: 30,
         }
     }
 
-    async fn test_pool() -> SqlitePool {
+    async fn test_pool() -> PgPool {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after unix epoch")
@@ -450,7 +444,7 @@ mod tests {
             .expect("test db should initialize")
     }
 
-    async fn setup_user_with_discord_xp_stat(pool: &SqlitePool) -> DbUser {
+    async fn setup_user_with_discord_xp_stat(pool: &PgPool) -> DbUser {
         let guild_id = 42_i64;
         queries::upsert_guild(pool, guild_id)
             .await
@@ -462,21 +456,16 @@ mod tests {
         queries::update_guild_config(
             pool,
             guild_id,
-            &serde_json::to_string(&guild_cfg).expect("guild config should serialize"),
+            serde_json::to_value(guild_cfg.clone()).expect("guild config should serialize"),
         )
         .await
         .expect("guild config should update");
 
-        queries::register_user(
-            pool,
-            1001,
-            "uuid-test",
-            "player",
-            guild_id,
-            "2026-01-01T00:00:00Z",
-        )
-        .await
-        .expect("user should register")
+        let fake_time = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+
+        queries::register_user(pool, 1001, Uuid::new_v4(), "player", guild_id, fake_time)
+            .await
+            .expect("user should register")
     }
 
     #[tokio::test]
@@ -485,21 +474,17 @@ mod tests {
         let config = test_app_config();
         let user = setup_user_with_discord_xp_stat(&pool).await;
 
-        queries::insert_discord_snapshot(
-            &pool,
-            user.id,
-            "messages_sent",
-            0.0,
-            "2026-01-01T00:00:00Z",
-        )
-        .await
-        .expect("baseline discord snapshot should insert");
+        let fake_time = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+
+        queries::insert_discord_snapshot(&pool, user.id, "messages_sent", 0.0, fake_time)
+            .await
+            .expect("baseline discord snapshot should insert");
         queries::insert_discord_snapshot(
             &pool,
             user.id,
             "messages_sent",
             5.0,
-            "2026-01-01T00:05:00Z",
+            fake_time + chrono::Duration::minutes(5),
         )
         .await
         .expect("intermediate discord snapshot should insert");
@@ -508,14 +493,14 @@ mod tests {
             user.id,
             "messages_sent",
             9.0,
-            "2026-01-01T00:10:00Z",
+            fake_time + chrono::Duration::minutes(10),
         )
         .await
         .expect("latest discord snapshot should insert");
 
         // Cursor is intentionally absent. First run should bootstrap from this
         // timestamp and award only the 5 -> 9 delta.
-        queries::set_xp_and_level(&pool, user.id, 10.0, 1, "2026-01-01T00:05:00Z")
+        queries::set_xp_and_level(&pool, user.id, 10.0, 1, &(fake_time + chrono::Duration::minutes(7)))
             .await
             .expect("xp row should seed");
 
@@ -559,6 +544,7 @@ mod tests {
             7.0,
         )];
 
+        let binding = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 10, 0).unwrap();
         let fut_a = apply_stat_deltas(
             &pool,
             &user,
@@ -566,9 +552,10 @@ mod tests {
             &config,
             &deltas_a,
             &[],
-            "2026-01-01T00:10:00Z",
+            &binding,
             "Test A",
         );
+        let binding = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 10, 0).unwrap();
         let fut_b = apply_stat_deltas(
             &pool,
             &user,
@@ -576,7 +563,7 @@ mod tests {
             &config,
             &deltas_b,
             &[],
-            "2026-01-01T00:10:01Z",
+            &binding,
             "Test B",
         );
 

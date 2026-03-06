@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poise::serenity_prelude::{self as serenity, CreateAttachment, EditMessage};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use tracing::{error, info, warn};
 
 use crate::commands::leaderboard::helpers::{self, PAGE_SIZE};
@@ -16,7 +16,7 @@ use crate::database::queries;
 /// Spawn the persistent leaderboard updater as a background tokio task.
 ///
 /// `http` is the Serenity HTTP client for editing Discord messages.
-pub fn start_leaderboard_updater(pool: SqlitePool, http: Arc<serenity::Http>, config: AppConfig) {
+pub fn start_leaderboard_updater(pool: PgPool, http: Arc<serenity::Http>, config: AppConfig) {
     let interval = Duration::from_secs(config.leaderboard_cache_seconds);
     let persistent_players = config.persistent_leaderboard_players;
 
@@ -38,7 +38,7 @@ pub fn start_leaderboard_updater(pool: SqlitePool, http: Arc<serenity::Http>, co
 
 /// Update all persistent leaderboards across all guilds.
 async fn update_all_leaderboards(
-    pool: &SqlitePool,
+    pool: &PgPool,
     http: &Arc<serenity::Http>,
     persistent_players: u64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -83,15 +83,15 @@ async fn update_all_leaderboards(
 
 /// Update a single guild's persistent leaderboard.
 async fn update_single_leaderboard(
-    pool: &SqlitePool,
+    pool: &PgPool,
     http: &Arc<serenity::Http>,
     guild_id: i64,
     channel_id: i64,
-    message_ids_json: &str,
+    message_ids_json: &serde_json::Value,
     status_message_id: i64,
     persistent_players: u64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let msg_ids: Vec<u64> = serde_json::from_str(message_ids_json).unwrap_or_default();
+    let msg_ids: Vec<u64> = serde_json::from_value(message_ids_json.clone()).unwrap_or_default();
     let channel = serenity::ChannelId::new(channel_id as u64);
 
     let total_pages = ((persistent_players as f64) / PAGE_SIZE as f64)
@@ -138,9 +138,7 @@ async fn update_single_leaderboard(
     }
 
     // Update last_updated timestamp
-    let now = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "unknown".to_string());
+    let now = chrono::Utc::now();
 
     queries::update_persistent_leaderboard_messages(pool, guild_id, message_ids_json, &now).await?;
 

@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use reqwest::Client;
+use uuid::Uuid;
 use std::collections::HashMap;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::debug;
@@ -86,7 +87,7 @@ impl HypixelClient {
         Ok(profile)
     }
 
-    pub async fn resolve_uuid(&self, uuid: &str) -> Result<String> {
+    pub async fn resolve_uuid(&self, uuid: &Uuid) -> Result<String> {
         let url = format!(
             "https://sessionserver.mojang.com/session/minecraft/profile/{}",
             uuid
@@ -116,7 +117,7 @@ impl HypixelClient {
         Ok(profile.name)
     }
 
-    pub async fn fetch_player(self: &Arc<Self>, uuid: &str) -> Result<PlayerData> {
+    pub async fn fetch_player(self: &Arc<Self>, uuid: &Uuid) -> Result<PlayerData> {
         if let Some(cached) = self.cache.get(&uuid.to_string()).await {
             return Ok(cached);
         }

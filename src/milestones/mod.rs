@@ -25,7 +25,7 @@
 ///
 /// # Future use
 /// Implement role assignments, announcements, or reward logic here.
-pub async fn handle_milestone_reached(discord_user_id: u64, milestone_level: i64) {
+pub async fn handle_milestone_reached(discord_user_id: u64, milestone_level: i32) {
     // Suppress unused-variable warnings until logic is added.
     let _ = (discord_user_id, milestone_level);
 

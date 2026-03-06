@@ -4,6 +4,7 @@
 /// since the last sweep.  Attaches a generated PNG level card image.
 use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateEmbed};
 use tracing::{info, debug};
+use uuid::Uuid;
 
 use crate::config::GuildConfig;
 use crate::database::queries;
@@ -14,7 +15,7 @@ use crate::xp::calculator::{calculate_level, xp_for_level};
 
 /// Fetch the player's Crafatar face avatar (80×80 px).
 /// Non-fatal — returns `None` on any error.
-async fn fetch_avatar(uuid: &str) -> Option<Vec<u8>> {
+async fn fetch_avatar(uuid: &Uuid) -> Option<Vec<u8>> {
     let url = format!("https://minotar.net/avatar/{}/80", uuid);
 
     let client = reqwest::Client::new();
@@ -76,7 +77,7 @@ pub async fn level(
     let (total_xp, last_updated) = xp_row
         .as_ref()
         .map(|x| (x.total_xp, x.last_updated.clone()))
-        .unwrap_or_else(|| (0.0, String::new()));
+        .unwrap_or_else(|| (0.0, chrono::Utc::now()));
 
     let base_xp = data.config.base_level_xp;
     let exponent = data.config.level_exponent;
@@ -91,7 +92,7 @@ pub async fn level(
     let guild_row = queries::get_guild(&data.db, guild_id_i64).await?;
     let guild_config: GuildConfig = guild_row
         .as_ref()
-        .map(|g| serde_json::from_str(&g.config_json).unwrap_or_default())
+        .map(|g| serde_json::from_value(g.config_json.clone()).unwrap_or_default())
         .unwrap_or_default();
 
     let active_keys: Vec<String> = {
@@ -162,7 +163,7 @@ pub async fn level(
         Some(name) => name.clone(),
         None => match data.hypixel.resolve_uuid(&db_user.minecraft_uuid).await {
             Ok(name) => name,
-            Err(_) => db_user.minecraft_uuid.clone(),
+            Err(_) => db_user.minecraft_uuid.to_string(),
         },
     };
 

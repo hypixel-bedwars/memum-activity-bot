@@ -9,8 +9,7 @@
 /// one and stores a new snapshot row, mirroring the EAV pattern used for
 /// Hypixel stats.
 use serenity::all::FullEvent;
-use sqlx::SqlitePool;
-use time::OffsetDateTime;
+use sqlx::PgPool;
 use tracing::{debug, error};
 
 use crate::database::queries;
@@ -79,13 +78,13 @@ pub async fn handle_event(event: &FullEvent, data: &Data) -> Result<(), Error> {
 
 /// Record a command usage for the invoking user. Called from the Poise
 /// pre-command hook.
-pub async fn record_command_usage(pool: &SqlitePool, discord_user_id: i64, guild_id: i64) {
+pub async fn record_command_usage(pool: &PgPool, discord_user_id: i64, guild_id: i64) {
     increment_stat(pool, discord_user_id, guild_id, "commands_used").await;
 }
 
 /// Increment a stat counter for a user. If the user is not registered in the
 /// given guild, the event is silently dropped (we only track registered users).
-async fn increment_stat(pool: &SqlitePool, discord_user_id: i64, guild_id: i64, stat_name: &str) {
+async fn increment_stat(pool: &PgPool, discord_user_id: i64, guild_id: i64, stat_name: &str) {
     // Look up the internal user id.
     let user = match queries::get_user_by_discord_id(pool, discord_user_id, guild_id).await {
         Ok(Some(u)) => u,
@@ -107,12 +106,11 @@ async fn increment_stat(pool: &SqlitePool, discord_user_id: i64, guild_id: i64, 
     };
 
     let new_value = current + 1.0;
-    let now = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "unknown".to_string());
+    let now = chrono::Utc::now();
 
     if let Err(e) =
-        queries::insert_discord_snapshot(pool, user.id, stat_name, new_value, &now).await
+    
+        queries::insert_discord_snapshot(pool, user.id, stat_name, new_value, now).await
     {
         error!(error = %e, "Discord tracker: failed to insert snapshot.");
     } else {

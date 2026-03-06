@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde_json::Value;
+use uuid::Uuid;
 
 /// Response from the Mojang username-to-UUID endpoint.
 ///
@@ -14,7 +15,7 @@ use serde_json::Value;
 #[derive(Debug, Deserialize)]
 pub struct MojangProfile {
     /// The player's UUID (no dashes).
-    pub id: String,
+    pub id: Uuid,
     /// The player's current username.
     pub name: String,
 }

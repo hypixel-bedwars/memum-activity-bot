@@ -7,7 +7,8 @@ use time::OffsetDateTime;
 use tracing::{debug, error, info};
 
 use poise::serenity_prelude::{self as serenity, CreateEmbed};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::config::GuildConfig;
 use crate::database::queries;
@@ -29,7 +30,7 @@ pub async fn perform_registration(
     user_id: serenity::UserId,
     user_tag: &str,
     minecraft_username: &str,
-) -> Result<(String, Option<(i64, String)>), Error> {
+) -> Result<(String, Option<(i64, Uuid)>), Error> {
     let guild_id_i64 = guild_id.get() as i64;
     let discord_user_id = user_id.get() as i64;
 
@@ -46,7 +47,7 @@ pub async fn perform_registration(
     let guild_row = queries::get_guild(&data.db, guild_id_i64).await?;
     let guild_config: GuildConfig = guild_row
         .as_ref()
-        .map(|g| serde_json::from_str(&g.config_json).unwrap_or_default())
+        .map(|g| serde_json::from_value(g.config_json.clone()).unwrap_or_default())
         .unwrap_or_default();
 
     debug!(
@@ -194,17 +195,15 @@ pub async fn perform_registration(
         "Registered role assigned"
     );
 
-    let now = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "unknown".to_string());
+    let now = chrono::Utc::now();
 
     let db_user = queries::register_user(
         &data.db,
         discord_user_id,
-        &profile.id,
+        profile.id,
         &profile.name,
         guild_id_i64,
-        &now,
+        now,
     )
     .await?;
 
@@ -215,8 +214,9 @@ pub async fn perform_registration(
     );
 
     let bw = &player_data.bedwars;
+    let time_now = chrono::Utc::now();
     for (stat_name, value) in &bw.stats {
-        queries::insert_hypixel_snapshot(&data.db, db_user.id, stat_name, *value, &now).await?;
+        queries::insert_hypixel_snapshot(&data.db, db_user.id, stat_name, *value, time_now).await?;
     }
 
     debug!(
@@ -226,7 +226,7 @@ pub async fn perform_registration(
     );
 
     for stat_name in &["messages_sent", "reactions_added", "commands_used"] {
-        queries::insert_discord_snapshot(&data.db, db_user.id, stat_name, 0.0, &now).await?;
+        queries::insert_discord_snapshot(&data.db, db_user.id, stat_name, 0.0, now).await?;
     }
 
     debug!(
@@ -234,7 +234,7 @@ pub async fn perform_registration(
         "Inserted initial Discord stat snapshots"
     );
 
-    queries::upsert_xp(&data.db, db_user.id, 0.0, &now).await?;
+    queries::upsert_xp(&data.db, db_user.id, 0.0, now).await?;
 
     debug!(
         db_user_id = db_user.id,
@@ -259,9 +259,9 @@ pub async fn perform_registration(
 }
 
 pub async fn fetch_and_cache_head_texture(
-    pool: &SqlitePool,
+    pool: &PgPool,
     user_id: i64,
-    uuid: &str,
+    uuid: &Uuid,
 ) -> Option<String> {
     // Construct the URL you want to fetch. Minotar is convenient:
     // let url = format!("https://minotar.net/helm/{}/64.png", uuid);

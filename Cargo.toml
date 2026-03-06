@@ -12,7 +12,7 @@ serenity = { version = "0.12.5", default-features = false, features = ["builder"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "migrate", "macros"] }
+sqlx = { version = "0.8", features = [ "postgres", "runtime-tokio-rustls", "macros", "chrono", "uuid", "json"] }
 tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
@@ -20,3 +20,5 @@ time = { version = "0.3", features = ["serde", "serde-well-known", "formatting",
 image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = { version = "0.24", default-features = false }
 base64 = "0.22.1"
+chrono = "0.4.44"
+uuid = { version = "1.22.0", features = ["serde", "v4"] }

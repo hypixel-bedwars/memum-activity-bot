@@ -102,7 +102,7 @@ async fn autocomplete_configured_stat<'a>(
     };
 
     let config = match queries::get_guild(&ctx.data().db, guild_id).await {
-        Ok(Some(row)) => serde_json::from_str::<GuildConfig>(&row.config_json).unwrap_or_default(),
+        Ok(Some(row)) => serde_json::from_value::<GuildConfig>(row.config_json).unwrap_or_default(),
         _ => GuildConfig::default(),
     };
 
@@ -162,7 +162,7 @@ async fn load_guild_config(ctx: &Context<'_>) -> Result<(i64, GuildConfig), Erro
     let guild_row = queries::get_guild(&data.db, guild_id).await?;
     let config: GuildConfig = guild_row
         .as_ref()
-        .map(|g| serde_json::from_str(&g.config_json).unwrap_or_default())
+        .map(|g| serde_json::from_value(g.config_json.clone()).unwrap_or_default())
         .unwrap_or_default();
 
     Ok((guild_id, config))
@@ -240,8 +240,8 @@ pub async fn add_bedwars(
     }
 
     config.xp_config.insert(stat_key.clone(), xp_per_unit);
-    let config_json = serde_json::to_string(&config)?;
-    queries::update_guild_config(&data.db, guild_id, &config_json).await?;
+    let config_json = serde_json::to_value(config)?;
+    queries::update_guild_config(&data.db, guild_id, config_json).await?;
 
     let mode_display = BEDWARS_MODES
         .iter()
@@ -305,8 +305,8 @@ pub async fn add_discord(
     }
 
     config.xp_config.insert(stat.clone(), xp_per_unit);
-    let config_json = serde_json::to_string(&config)?;
-    queries::update_guild_config(&data.db, guild_id, &config_json).await?;
+    let config_json = serde_json::to_value(&config)?;
+    queries::update_guild_config(&data.db, guild_id, config_json).await?;
 
     let stat_display = DISCORD_STATS
         .iter()
@@ -353,8 +353,8 @@ pub async fn edit_stat(
 
     let old_xp = config.xp_config[&stat_name];
     config.xp_config.insert(stat_name.clone(), new_xp_value);
-    let config_json = serde_json::to_string(&config)?;
-    queries::update_guild_config(&data.db, guild_id, &config_json).await?;
+    let config_json = serde_json::to_value(&config)?;
+    queries::update_guild_config(&data.db, guild_id, config_json).await?;
 
     ctx.say(format!(
         "Updated `{stat_name}`: {old_xp} XP/unit → **{new_xp_value} XP/unit**."
@@ -389,8 +389,8 @@ pub async fn remove(
         return Ok(());
     }
 
-    let config_json = serde_json::to_string(&config)?;
-    queries::update_guild_config(&data.db, guild_id, &config_json).await?;
+    let config_json = serde_json::to_value(&config)?;
+    queries::update_guild_config(&data.db, guild_id, config_json).await?;
 
     ctx.say(format!(
         "Removed `{stat_name}` from XP configuration. Existing snapshots are preserved."
@@ -419,7 +419,7 @@ pub async fn list(ctx: Context<'_>) -> Result<(), Error> {
     let guild_row = queries::get_guild(&data.db, guild_id).await?;
     let config: GuildConfig = guild_row
         .as_ref()
-        .map(|g| serde_json::from_str(&g.config_json).unwrap_or_default())
+        .map(|g| serde_json::from_value(g.config_json.clone()).unwrap_or_default())
         .unwrap_or_default();
 
     if config.xp_config.is_empty() {

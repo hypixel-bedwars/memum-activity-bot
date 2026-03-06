@@ -49,7 +49,7 @@ pub async fn stats(
     let guild_row = queries::get_guild(&data.db, guild_id_i64).await?;
     let guild_config: GuildConfig = guild_row
         .as_ref()
-        .map(|g| serde_json::from_str(&g.config_json).unwrap_or_default())
+        .map(|g| serde_json::from_value(g.config_json.clone()).unwrap_or_default())
         .unwrap_or_default();
 
     let active_keys: Vec<String> = {
@@ -75,7 +75,7 @@ pub async fn stats(
         Some(name) => name.clone(),
         None => match data.hypixel.resolve_uuid(&db_user.minecraft_uuid).await {
             Ok(name) => name,
-            Err(_) => db_user.minecraft_uuid.clone(),
+            Err(_) => db_user.minecraft_uuid.to_string(),
         },
     };
     

@@ -5,7 +5,7 @@
 /// serves as the universal interface between stat sources and the XP calculator.
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::commands::leaderboard::leaderboard::LeaderboardCache;
 use crate::config::AppConfig;
@@ -35,7 +35,7 @@ pub type Context<'a> = poise::Context<'a, Data, Error>;
 /// by Poise) for the lifetime of the process.
 pub struct Data {
     /// SQLite connection pool for all database operations.
-    pub db: SqlitePool,
+    pub db: PgPool,
 
     /// Pre-configured Hypixel API client (with built-in cache and rate limiter).
     pub hypixel: Arc<HypixelClient>,

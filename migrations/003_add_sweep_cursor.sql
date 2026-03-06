@@ -6,12 +6,12 @@
 -- global XP timestamp.
 
 CREATE TABLE IF NOT EXISTS sweep_cursor (
-    user_id            INTEGER NOT NULL REFERENCES users(id),
-    source             TEXT    NOT NULL,
-    stat_name          TEXT    NOT NULL,
-    stat_value         REAL    NOT NULL DEFAULT 0,
-    last_snapshot_ts   TEXT    NOT NULL,
-    updated_at         TEXT    NOT NULL,
+    user_id            BIGINT              NOT NULL REFERENCES users(id),
+    source             TEXT                NOT NULL,
+    stat_name          TEXT                NOT NULL,
+    stat_value         DOUBLE PRECISION    NOT NULL DEFAULT 0,
+    last_snapshot_ts   TIMESTAMPTZ         NOT NULL,
+    updated_at         TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
     PRIMARY KEY(user_id, source, stat_name)
 );
 

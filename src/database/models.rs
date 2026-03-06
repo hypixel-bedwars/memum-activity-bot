@@ -1,5 +1,7 @@
 use std::{collections::HashMap, sync::Mutex};
 
+use chrono::{DateTime, Utc};
+use serde_json::Value;
 /// Database row models.
 ///
 /// Each struct maps 1-to-1 to a database table and derives `sqlx::FromRow`
@@ -8,6 +10,7 @@ use std::{collections::HashMap, sync::Mutex};
 /// Fields are intentionally public so consuming code can access any column.
 use sqlx::FromRow;
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // guilds
@@ -18,7 +21,7 @@ use time::OffsetDateTime;
 pub struct DbGuild {
     pub guild_id: i64,
     pub registered_role_id: Option<i64>,
-    pub config_json: String,
+    pub config_json: Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -30,17 +33,17 @@ pub struct DbGuild {
 pub struct DbUser {
     pub id: i64,
     pub discord_user_id: i64,
-    pub minecraft_uuid: String,
+    pub minecraft_uuid: Uuid,
     /// Minecraft display name stored at registration time. `None` for rows that
     /// pre-date migration 002.
     pub minecraft_username: Option<String>,
     pub guild_id: i64,
-    pub registered_at: String,
+    pub registered_at: DateTime<Utc>,
 
     // Optional cached head texture (base64 data URL or raw encoded PNG). New column.
     pub head_texture: Option<String>,
     // RFC3339 timestamp of when head_texture was last updated.
-    pub head_texture_updated_at: Option<String>,
+    pub head_texture_updated_at: Option<DateTime<Utc>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +58,7 @@ pub struct DbStatsSnapshot {
     pub user_id: i64,
     pub stat_name: String,
     pub stat_value: f64,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------
@@ -67,8 +70,8 @@ pub struct DbStatsSnapshot {
 pub struct DbXP {
     pub user_id: i64,
     pub total_xp: f64,
-    pub level: i64,
-    pub last_updated: String,
+    pub level: i32,
+    pub last_updated: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,8 +85,8 @@ pub struct DbSweepCursor {
     pub source: String,
     pub stat_name: String,
     pub stat_value: f64,
-    pub last_snapshot_ts: String,
-    pub updated_at: String,
+    pub last_snapshot_ts: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------
@@ -96,10 +99,10 @@ pub struct DbPersistentLeaderboard {
     pub guild_id: i64,
     pub channel_id: i64,
     /// JSON array of Discord message IDs (one per page).
-    pub message_ids: String,
+    pub message_ids: Value,
     pub status_message_id: i64,
-    pub created_at: String,
-    pub last_updated: String,
+    pub created_at: DateTime<Utc>,
+    pub last_updated: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------
@@ -112,9 +115,9 @@ pub struct DbPersistentLeaderboard {
 pub struct LeaderboardEntry {
     pub discord_user_id: i64,
     pub minecraft_username: Option<String>,
-    pub minecraft_uuid: String,
+    pub minecraft_uuid: Uuid,
     pub total_xp: f64,
-    pub level: i64,
+    pub level: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +130,7 @@ pub struct DbMilestone {
     pub id: i64,
     pub guild_id: i64,
     /// The level threshold that defines this milestone.
-    pub level: i64,
+    pub level: i32,
 }
 
 /// A milestone row joined with the count of users who have reached it.
@@ -136,7 +139,7 @@ pub struct DbMilestone {
 pub struct MilestoneWithCount {
     pub id: i64,
     pub guild_id: i64,
-    pub level: i64,
+    pub level: i32,
     /// Number of users in this guild whose level is >= this milestone's level.
     pub user_count: i64,
 }

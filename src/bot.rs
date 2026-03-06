@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use poise::serenity_prelude as serenity;
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use tracing::info;
 
 use crate::commands;
@@ -29,7 +29,7 @@ use crate::database::models::MessageValidationState;
 /// 3. In the `setup` callback, starts the stat sweeper background task.
 pub async fn build(
     config: AppConfig,
-    db: SqlitePool,
+    db: PgPool,
 ) -> Result<poise::Framework<Data, Error>, Error> {
     let hypixel = Arc::new(HypixelClient::new(config.hypixel_api_key.clone()));
 
@@ -81,9 +81,9 @@ pub async fn build(
             Box::pin(async move {
                 info!("Bot is connected and ready!");
 
-                let dev_guild = std::env::var("DEV_GUILD_ID").ok();
+                let guild = std::env::var("GUILD_ID").ok();
 
-                if let Some(dev) = dev_guild {
+                if let Some(dev) = guild {
                     if let Ok(gid) = dev.parse::<u64>() {
                         let guild_id = serenity::GuildId::new(gid);
 
@@ -98,12 +98,12 @@ pub async fn build(
                         )
                         .await?;
 
-                        info!(dev_guild = gid, "Slash commands registered in dev guild");
+                        info!(guild = gid, "Slash commands registered in dev guild");
                     } else {
-                        info!("DEV_GUILD_ID set but invalid");
+                        info!("GUILD_ID set but invalid");
                     }
                 } else {
-                    info!("DEV_GUILD_ID not set, skipping slash command registration");
+                    info!("GUILD_ID not set, skipping slash command registration");
                 }
 
                 // Start background sweepers.
