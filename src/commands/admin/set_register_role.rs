@@ -9,26 +9,17 @@ use crate::database::queries;
 use crate::shared::types::{Context, Error};
 
 /// Set the role assigned to users on registration. Admin only.
-#[poise::command(slash_command, guild_only, ephemeral, rename = "set-register-role")]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "set-register-role",
+    check = "crate::permissions::admin_check"
+)]
 pub async fn set_register_role(
     ctx: Context<'_>,
     #[description = "The role to assign to users when they register"] role: serenity::Role,
 ) -> Result<(), Error> {
-    // Inline admin check — replies ephemerally and exits if not authorised.
-    if !ctx
-        .data()
-        .config
-        .admin_user_ids
-        .contains(&ctx.author().id.get())
-    {
-        let embed = CreateEmbed::default()
-            .title("Permission Denied")
-            .color(0xFF4444)
-            .description("You do not have permission to use this command.");
-        ctx.send(poise::CreateReply::default().embed(embed)).await?;
-        return Ok(());
-    }
-
     debug!(
         "Invoked /set-register-role with role {} (ID {})",
         role.name, role.id
@@ -67,9 +58,9 @@ pub async fn set_register_role(
 
     debug!("Finished handling /set-register-role");
     info!(
-		"Updated registration role for guild {} to {} (ID {})",
-		guild_id, role.name, role.id
-	);
+        "Updated registration role for guild {} to {} (ID {})",
+        guild_id, role.name, role.id
+    );
 
     Ok(())
 }

@@ -15,27 +15,16 @@ use super::helpers::{self, PAGE_SIZE};
 ///
 /// The bot sends one message per page (up to `PERSISTENT_LEADERBOARD_PLAYERS / 10`
 /// pages) and stores the message IDs for automatic updates.
-#[poise::command(slash_command, guild_only, rename = "leaderboard_create")]
+#[poise::command(
+    slash_command,
+    guild_only,
+    rename = "leaderboard_create",
+    check = "crate::permissions::admin_check"
+)]
 pub async fn leaderboard_create(
     ctx: Context<'_>,
     #[description = "Channel to post the leaderboard in"] channel: serenity::Channel,
 ) -> Result<(), Error> {
-    // Admin check
-    if !ctx
-        .data()
-        .config
-        .admin_user_ids
-        .contains(&ctx.author().id.get())
-    {
-        ctx.send(
-            poise::CreateReply::default()
-                .ephemeral(true)
-                .content("You do not have permission to use this command."),
-        )
-        .await?;
-        return Ok(());
-    }
-
     ctx.defer_ephemeral().await?;
 
     let guild_id = ctx
@@ -49,7 +38,8 @@ pub async fn leaderboard_create(
         queries::get_persistent_leaderboard(&ctx.data().db, guild_id.get() as i64).await?
     {
         // Try to clean up old messages
-        let old_msg_ids: Vec<u64> = serde_json::from_value(existing.message_ids.clone()).unwrap_or_default();
+        let old_msg_ids: Vec<u64> =
+            serde_json::from_value(existing.message_ids.clone()).unwrap_or_default();
         let old_channel = serenity::ChannelId::new(existing.channel_id as u64);
         for msg_id in old_msg_ids {
             let _ = old_channel
@@ -101,7 +91,7 @@ pub async fn leaderboard_create(
             )),
         )
         .await?;
-    
+
     let status_message_id = status_msg.id.get();
 
     // Store in database
@@ -132,8 +122,11 @@ pub async fn leaderboard_create(
             )),
     )
     .await?;
-    
-    info!("Created persistent leaderboard for guild {} in channel {}", guild_id, channel_id);
+
+    info!(
+        "Created persistent leaderboard for guild {} in channel {}",
+        guild_id, channel_id
+    );
 
     // send a follow-up message that has the time when it was last updated (so the admin can see that it worked and know when it will update next)
     // it will look something like this

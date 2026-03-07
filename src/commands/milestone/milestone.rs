@@ -10,13 +10,6 @@ use tracing::info;
 use crate::database::queries;
 use crate::shared::types::{Context, Error};
 
-fn is_admin(ctx: &Context<'_>) -> bool {
-    ctx.data()
-        .config
-        .admin_user_ids
-        .contains(&ctx.author().id.get())
-}
-
 /// Returns the existing milestone levels for the invoking guild as autocomplete
 /// choices. The submitted value is the level as a decimal string so the handler
 /// can parse it back to i64 without needing the internal row ID.
@@ -44,7 +37,9 @@ async fn autocomplete_existing_milestone<'a>(
                 || m.level.to_string().contains(&partial_lower)
         })
         .take(25)
-        .map(|m| serenity::AutocompleteChoice::new(format!("Level {}", m.level), m.level.to_string()))
+        .map(|m| {
+            serenity::AutocompleteChoice::new(format!("Level {}", m.level), m.level.to_string())
+        })
         .collect()
 }
 
@@ -62,21 +57,11 @@ pub async fn milestone(_ctx: Context<'_>) -> Result<(), Error> {
 ///
 /// Creates a milestone at the given level threshold. Once added it appears on
 /// the leaderboard with a live count of how many users have reached it.
-#[poise::command(slash_command, ephemeral)]
+#[poise::command(slash_command, ephemeral, check = "crate::permissions::admin_check")]
 pub async fn add(
     ctx: Context<'_>,
     #[description = "The level threshold for this milestone (e.g. 25, 50, 100)"] level: i32,
 ) -> Result<(), Error> {
-    if !is_admin(&ctx) {
-        ctx.send(
-            poise::CreateReply::default()
-                .ephemeral(true)
-                .content("You do not have permission to manage milestones."),
-        )
-        .await?;
-        return Ok(());
-    }
-
     if level < 1 {
         ctx.send(
             poise::CreateReply::default()
@@ -120,7 +105,7 @@ pub async fn add(
 ///
 /// Select the milestone you want to change via autocomplete, then supply the
 /// new level value. The milestone must not conflict with another existing one.
-#[poise::command(slash_command, ephemeral)]
+#[poise::command(slash_command, ephemeral, check = "crate::permissions::admin_check")]
 pub async fn edit(
     ctx: Context<'_>,
     #[description = "The current milestone level to edit"]
@@ -128,28 +113,17 @@ pub async fn edit(
     current_level: String,
     #[description = "The new level for this milestone"] new_level: i32,
 ) -> Result<(), Error> {
-    if !is_admin(&ctx) {
-        ctx.send(
-            poise::CreateReply::default()
-                .ephemeral(true)
-                .content("You do not have permission to manage milestones."),
-        )
-        .await?;
-        return Ok(());
-    }
-
-    let parsed_current: i32 = match current_level.trim().parse() {
-        Ok(v) => v,
-        Err(_) => {
-            ctx.send(
-                poise::CreateReply::default()
-                    .ephemeral(true)
-                    .content("Invalid milestone level. Please select one from the autocomplete list."),
-            )
-            .await?;
-            return Ok(());
-        }
-    };
+    let parsed_current: i32 =
+        match current_level.trim().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                ctx.send(poise::CreateReply::default().ephemeral(true).content(
+                    "Invalid milestone level. Please select one from the autocomplete list.",
+                ))
+                .await?;
+                return Ok(());
+            }
+        };
 
     if new_level < 1 {
         ctx.send(
@@ -178,9 +152,7 @@ pub async fn edit(
 
     // Look up the milestone by its current level.
     let milestones = queries::get_milestones(&ctx.data().db, guild_id).await?;
-    let target = milestones
-        .iter()
-        .find(|m| m.level == parsed_current);
+    let target = milestones.iter().find(|m| m.level == parsed_current);
 
     let milestone = match target {
         Some(m) => m.clone(),
@@ -211,10 +183,16 @@ pub async fn edit(
         return Ok(());
     }
 
-    let updated = queries::edit_milestone(&ctx.data().db, guild_id, milestone.id, new_level).await?;
+    let updated =
+        queries::edit_milestone(&ctx.data().db, guild_id, milestone.id, new_level).await?;
 
     if updated {
-        info!(guild_id, old_level = parsed_current, new_level, "Milestone edited.");
+        info!(
+            guild_id,
+            old_level = parsed_current,
+            new_level,
+            "Milestone edited."
+        );
         ctx.send(
             poise::CreateReply::default()
                 .ephemeral(true)
@@ -239,35 +217,24 @@ pub async fn edit(
 ///
 /// Select the milestone to delete via autocomplete. This action cannot be
 /// undone.
-#[poise::command(slash_command, ephemeral)]
+#[poise::command(slash_command, ephemeral, check = "crate::permissions::admin_check")]
 pub async fn remove(
     ctx: Context<'_>,
     #[description = "The milestone level to remove"]
     #[autocomplete = "autocomplete_existing_milestone"]
     level: String,
 ) -> Result<(), Error> {
-    if !is_admin(&ctx) {
-        ctx.send(
-            poise::CreateReply::default()
-                .ephemeral(true)
-                .content("You do not have permission to manage milestones."),
-        )
-        .await?;
-        return Ok(());
-    }
-
-    let parsed_level: i32 = match level.trim().parse() {
-        Ok(v) => v,
-        Err(_) => {
-            ctx.send(
-                poise::CreateReply::default()
-                    .ephemeral(true)
-                    .content("Invalid milestone level. Please select one from the autocomplete list."),
-            )
-            .await?;
-            return Ok(());
-        }
-    };
+    let parsed_level: i32 =
+        match level.trim().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                ctx.send(poise::CreateReply::default().ephemeral(true).content(
+                    "Invalid milestone level. Please select one from the autocomplete list.",
+                ))
+                .await?;
+                return Ok(());
+            }
+        };
 
     let guild_id = ctx
         .guild_id()
@@ -384,14 +351,12 @@ pub async fn view(ctx: Context<'_>) -> Result<(), Error> {
     };
 
     ctx.send(
-        poise::CreateReply::default()
-            .ephemeral(true)
-            .embed(
-                serenity::CreateEmbed::new()
-                    .title("Milestone Progress")
-                    .description(message)
-                    .color(0x00bfff),
-            ),
+        poise::CreateReply::default().ephemeral(true).embed(
+            serenity::CreateEmbed::new()
+                .title("Milestone Progress")
+                .description(message)
+                .color(0x00bfff),
+        ),
     )
     .await?;
 

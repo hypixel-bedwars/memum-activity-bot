@@ -11,13 +11,24 @@ use crate::shared::types::{Context, Error};
 use crate::xp::calculator;
 
 /// Parent command
-#[poise::command(slash_command, guild_only, ephemeral, subcommands("add", "remove"))]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    subcommands("add", "remove"),
+    check = "crate::permissions::admin_check"
+)]
 pub async fn xp(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
 /// Add XP to a user
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::permissions::admin_check"
+)]
 pub async fn add(
     ctx: Context<'_>,
     #[description = "User to add XP to"] user: serenity::User,
@@ -72,7 +83,12 @@ pub async fn add(
 }
 
 /// Remove XP from a user
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::permissions::admin_check"
+)]
 pub async fn remove(
     ctx: Context<'_>,
     #[description = "User to remove XP from"] user: serenity::User,

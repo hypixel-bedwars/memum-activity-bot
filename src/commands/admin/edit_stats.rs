@@ -137,17 +137,6 @@ async fn autocomplete_configured_stat<'a>(
 }
 
 // ---------------------------------------------------------------------------
-// Helper — inline admin check
-// ---------------------------------------------------------------------------
-
-fn is_admin(ctx: &Context<'_>) -> bool {
-    ctx.data()
-        .config
-        .admin_user_ids
-        .contains(&ctx.author().id.get())
-}
-
-// ---------------------------------------------------------------------------
 // Shared guild config loader
 // ---------------------------------------------------------------------------
 
@@ -191,7 +180,13 @@ pub async fn edit_stats(_ctx: Context<'_>) -> Result<(), Error> {
 ///
 /// The final stat key is built as `{mode}_{metric}` (e.g. `eight_two_final_kills_bedwars`).
 /// For the Overall mode the metric is used directly (e.g. `wins_bedwars`).
-#[poise::command(slash_command, guild_only, ephemeral, rename = "add-bedwars")]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "add-bedwars",
+    check = "crate::permissions::admin_check"
+)]
 pub async fn add_bedwars(
     ctx: Context<'_>,
     #[description = "Bedwars mode (e.g. Solo, Doubles)"]
@@ -202,12 +197,6 @@ pub async fn add_bedwars(
     metric: String,
     #[description = "XP awarded per unit increase"] xp_per_unit: f64,
 ) -> Result<(), Error> {
-    if !is_admin(&ctx) {
-        ctx.say("You do not have permission to use this command.")
-            .await?;
-        return Ok(());
-    }
-
     // Validate against the fixed lists to guard against autocomplete bypass.
     if !BEDWARS_MODES.iter().any(|m| m.value == mode) {
         ctx.say(format!(
@@ -258,8 +247,11 @@ pub async fn add_bedwars(
         "Added **{mode_display} — {metric_display}** (`{stat_key}`) → **{xp_per_unit} XP/unit**."
     ))
     .await?;
-    
-    info!("Added **{mode_display} — {metric_display}** (`{stat_key}`) XP configuration by {}", ctx.author().name);
+
+    info!(
+        "Added **{mode_display} — {metric_display}** (`{stat_key}`) XP configuration by {}",
+        ctx.author().name
+    );
 
     Ok(())
 }
@@ -268,7 +260,13 @@ pub async fn add_bedwars(
 ///
 /// Discord stats are tracked from server activity (messages, reactions, etc.)
 /// rather than fetched from the Hypixel API.
-#[poise::command(slash_command, guild_only, ephemeral, rename = "add-discord")]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "add-discord",
+    check = "crate::permissions::admin_check"
+)]
 pub async fn add_discord(
     ctx: Context<'_>,
     #[description = "Discord activity stat to track"]
@@ -276,12 +274,6 @@ pub async fn add_discord(
     stat: String,
     #[description = "XP awarded per unit increase"] xp_per_unit: f64,
 ) -> Result<(), Error> {
-    if !is_admin(&ctx) {
-        ctx.say("You do not have permission to use this command.")
-            .await?;
-        return Ok(());
-    }
-
     // Validate against the fixed list to guard against autocomplete bypass.
     if !DISCORD_STATS.iter().any(|s| s.value == stat) {
         ctx.say(format!(
@@ -318,14 +310,23 @@ pub async fn add_discord(
         "Added Discord stat **{stat_display}** (`{stat}`) → **{xp_per_unit} XP/unit**."
     ))
     .await?;
-    
-    info!("Added Discord stat `{stat}` XP configuration by {}", ctx.author().name);
+
+    info!(
+        "Added Discord stat `{stat}` XP configuration by {}",
+        ctx.author().name
+    );
 
     Ok(())
 }
 
 /// Edit the XP value for an existing configured stat.
-#[poise::command(slash_command, guild_only, ephemeral, rename = "edit")]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "edit",
+    check = "crate::permissions::admin_check"
+)]
 pub async fn edit_stat(
     ctx: Context<'_>,
     #[description = "Stat to modify"]
@@ -333,12 +334,6 @@ pub async fn edit_stat(
     stat_name: String,
     #[description = "New XP per unit"] new_xp_value: f64,
 ) -> Result<(), Error> {
-    if !is_admin(&ctx) {
-        ctx.say("You do not have permission to use this command.")
-            .await?;
-        return Ok(());
-    }
-
     let (guild_id, mut config) = load_guild_config(&ctx).await?;
     let data = ctx.data();
 
@@ -360,26 +355,28 @@ pub async fn edit_stat(
         "Updated `{stat_name}`: {old_xp} XP/unit → **{new_xp_value} XP/unit**."
     ))
     .await?;
-    
-    info!("Updated `{stat_name}` XP configuration by {}", ctx.author().name);
+
+    info!(
+        "Updated `{stat_name}` XP configuration by {}",
+        ctx.author().name
+    );
 
     Ok(())
 }
 
 /// Remove a stat from the XP configuration.
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::permissions::admin_check"
+)]
 pub async fn remove(
     ctx: Context<'_>,
     #[description = "Stat to remove"]
     #[autocomplete = "autocomplete_configured_stat"]
     stat_name: String,
 ) -> Result<(), Error> {
-    if !is_admin(&ctx) {
-        ctx.say("You do not have permission to use this command.")
-            .await?;
-        return Ok(());
-    }
-
     let (guild_id, mut config) = load_guild_config(&ctx).await?;
     let data = ctx.data();
 
@@ -396,20 +393,22 @@ pub async fn remove(
         "Removed `{stat_name}` from XP configuration. Existing snapshots are preserved."
     ))
     .await?;
-    info!("Removed `{stat_name}` from XP configuration by {}", ctx.author().name);
+    info!(
+        "Removed `{stat_name}` from XP configuration by {}",
+        ctx.author().name
+    );
 
     Ok(())
 }
 
 /// List all stats currently in the XP configuration.
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::permissions::admin_check"
+)]
 pub async fn list(ctx: Context<'_>) -> Result<(), Error> {
-    if !is_admin(&ctx) {
-        ctx.say("You do not have permission to use this command.")
-            .await?;
-        return Ok(());
-    }
-
     let guild_id = ctx
         .guild_id()
         .ok_or("This command can only be used in a server")?
@@ -441,12 +440,10 @@ pub async fn list(ctx: Context<'_>) -> Result<(), Error> {
 
     let description = rows
         .iter()
-        .map(|(display, key, xp)| {
-            format!("**{}** — {:.0} XP (`{}`)", display, xp, key)
-        })
+        .map(|(display, key, xp)| format!("**{}** — {:.0} XP (`{}`)", display, xp, key))
         .collect::<Vec<_>>()
         .join("\n");
-    
+
     let embed = CreateEmbed::default()
         .title(format!("XP Stats — {} configured", rows.len()))
         .description(description)

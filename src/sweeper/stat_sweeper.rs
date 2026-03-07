@@ -498,7 +498,7 @@ mod tests {
             discord_sweep_interval_seconds: 15,
             base_level_xp: 100.0,
             level_exponent: 1.5,
-            admin_user_ids: Vec::new(),
+            admin_role_ids: Vec::new(),
             leaderboard_cache_seconds: 60,
             persistent_leaderboard_players: 10,
             min_message_length: 5,

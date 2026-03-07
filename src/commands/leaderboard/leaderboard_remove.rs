@@ -12,24 +12,13 @@ use crate::shared::types::{Context, Error};
 ///
 /// Deletes the leaderboard messages from the channel and stops automatic
 /// updates.
-#[poise::command(slash_command, guild_only, rename = "leaderboard_remove")]
+#[poise::command(
+    slash_command,
+    guild_only,
+    rename = "leaderboard_remove",
+    check = "crate::permissions::admin_check"
+)]
 pub async fn leaderboard_remove(ctx: Context<'_>) -> Result<(), Error> {
-    // Admin check
-    if !ctx
-        .data()
-        .config
-        .admin_user_ids
-        .contains(&ctx.author().id.get())
-    {
-        ctx.send(
-            poise::CreateReply::default()
-                .ephemeral(true)
-                .content("You do not have permission to use this command."),
-        )
-        .await?;
-        return Ok(());
-    }
-
     ctx.defer_ephemeral().await?;
 
     let guild_id = ctx
@@ -42,7 +31,8 @@ pub async fn leaderboard_remove(ctx: Context<'_>) -> Result<(), Error> {
     match existing {
         Some(lb) => {
             // Try to delete the messages
-            let msg_ids: Vec<u64> = serde_json::from_value(lb.message_ids.clone()).unwrap_or_default();
+            let msg_ids: Vec<u64> =
+                serde_json::from_value(lb.message_ids.clone()).unwrap_or_default();
             let channel_id = serenity::ChannelId::new(lb.channel_id as u64);
 
             let mut deleted = 0;
@@ -78,7 +68,7 @@ pub async fn leaderboard_remove(ctx: Context<'_>) -> Result<(), Error> {
             .await?;
         }
     }
-    
+
     info!("Persistent leaderboard removed for guild {}", guild_id);
 
     Ok(())

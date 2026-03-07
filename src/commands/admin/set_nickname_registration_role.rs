@@ -18,27 +18,13 @@ use crate::shared::types::{Context, Error};
     slash_command,
     guild_only,
     ephemeral,
-    rename = "set-nickname-registration-role"
+    rename = "set-nickname-registration-role",
+    check = "crate::permissions::admin_check"
 )]
 pub async fn set_nickname_registration_role(
     ctx: Context<'_>,
-    #[description = "Verified role."]
-    role: serenity::Role,
+    #[description = "Set a Verified role."] role: serenity::Role,
 ) -> Result<(), Error> {
-    if !ctx
-        .data()
-        .config
-        .admin_user_ids
-        .contains(&ctx.author().id.get())
-    {
-        let embed = CreateEmbed::default()
-            .title("Permission Denied")
-            .color(0xFF4444)
-            .description("You do not have permission to use this command.");
-        ctx.send(poise::CreateReply::default().embed(embed)).await?;
-        return Ok(());
-    }
-
     debug!(
         "Invoked /set-nickname-registration-role with role {} (ID {})",
         role.name, role.id
@@ -94,23 +80,10 @@ pub async fn set_nickname_registration_role(
     slash_command,
     guild_only,
     ephemeral,
-    rename = "clear-nickname-registration-role"
+    rename = "clear-nickname-registration-role",
+    check = "crate::permissions::admin_check"
 )]
 pub async fn clear_nickname_registration_role(ctx: Context<'_>) -> Result<(), Error> {
-    if !ctx
-        .data()
-        .config
-        .admin_user_ids
-        .contains(&ctx.author().id.get())
-    {
-        let embed = CreateEmbed::default()
-            .title("Permission Denied")
-            .color(0xFF4444)
-            .description("You do not have permission to use this command.");
-        ctx.send(poise::CreateReply::default().embed(embed)).await?;
-        return Ok(());
-    }
-
     debug!("Invoked /clear-nickname-registration-role");
 
     let guild_id = ctx

@@ -36,10 +36,9 @@ pub struct AppConfig {
     /// Exponential scaling factor for the leveling curve.
     pub level_exponent: f64,
 
-    /// Discord user IDs that are allowed to use admin-only commands such as
-    /// `/edit-stats` and `/set-register-role`. Parsed from `ADMIN_USER_IDS`
-    /// (comma-separated list of snowflake IDs). Empty if the env var is unset.
-    pub admin_user_ids: Vec<u64>,
+    /// Discord role IDs that grant admin access to bot commands.
+    /// Parsed from `ADMIN_ROLE_IDS` (comma-separated role snowflakes).
+    pub admin_role_ids: Vec<u64>,
 
     /// How long leaderboard images are cached before regeneration, in seconds.
     /// Defaults to 60 if `LEADERBOARD_CACHE_SECONDS` is unset.
@@ -81,7 +80,7 @@ impl AppConfig {
                 .unwrap_or_else(|_| "1.5".to_string())
                 .parse()
                 .expect("LEVEL_EXPONENT must be a valid f64"),
-            admin_user_ids: env::var("ADMIN_USER_IDS")
+            admin_role_ids: env::var("ADMIN_ROLE_IDS")
                 .unwrap_or_default()
                 .split(',')
                 .filter_map(|s| s.trim().parse::<u64>().ok())

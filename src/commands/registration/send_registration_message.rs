@@ -10,26 +10,17 @@ use tracing::info;
 use crate::shared::types::{Context, Error};
 
 /// Send a registration message with a Register button to a channel. Admin only.
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::permissions::admin_check"
+)]
 pub async fn send_registration_message(
     ctx: Context<'_>,
     #[description = "The channel to send the registration message to"]
     channel: serenity::GuildChannel,
 ) -> Result<(), Error> {
-    if !ctx
-        .data()
-        .config
-        .admin_user_ids
-        .contains(&ctx.author().id.get())
-    {
-        let embed = CreateEmbed::default()
-            .title("Permission Denied")
-            .color(0xFF4444)
-            .description("You do not have permission to use this command.");
-        ctx.send(poise::CreateReply::default().embed(embed)).await?;
-        return Ok(());
-    }
-
     let embed = CreateEmbed::default()
         .title("🔗 Account Registration")
         .color(0x00BFFF)
