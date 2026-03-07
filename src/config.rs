@@ -129,6 +129,14 @@ pub struct GuildConfig {
     /// contribute to XP. Defaults to `false`.
     #[serde(default)]
     pub discord_stats_enabled: bool,
+
+    /// Role ID that gates nickname-based auto-registration via the Register
+    /// button. When `Some`, users who possess this role may register by
+    /// pressing the button — the bot reads their nickname and extracts the
+    /// Minecraft username automatically. When `None` (the default) the
+    /// feature is disabled and users must use `/register <username>`.
+    #[serde(default)]
+    pub nickname_registration_role_id: Option<u64>,
 }
 
 impl Default for GuildConfig {
@@ -137,6 +145,7 @@ impl Default for GuildConfig {
             registered_role_id: None,
             xp_config: default_xp_config(),
             discord_stats_enabled: false,
+            nickname_registration_role_id: None,
         }
     }
 }

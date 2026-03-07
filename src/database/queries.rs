@@ -245,11 +245,51 @@ pub async fn unregister_user(
     discord_user_id: i64,
     guild_id: i64,
 ) -> Result<(), sqlx::Error> {
-    debug!(
-        "queries::unregister_user: discord_user_id={}, guild_id={}",
-        discord_user_id, guild_id
-    );
+    let user: Option<DbUser> =
+        sqlx::query_as("SELECT * FROM users WHERE discord_user_id = $1 AND guild_id = $2")
+            .bind(discord_user_id)
+            .bind(guild_id)
+            .fetch_optional(pool)
+            .await?;
 
+    let Some(user) = user else {
+        return Ok(());
+    };
+
+    let user_id = user.id;
+
+    // delete dependent rows
+    sqlx::query("DELETE FROM sweep_cursor WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    sqlx::query("DELETE FROM xp WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    sqlx::query("DELETE FROM stat_deltas WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    sqlx::query("DELETE FROM xp_events WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    sqlx::query("DELETE FROM hypixel_stats_snapshot WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    sqlx::query("DELETE FROM discord_stats_snapshot WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    // finally delete user
     sqlx::query(
         "DELETE FROM users
          WHERE discord_user_id = $1 AND guild_id = $2",
