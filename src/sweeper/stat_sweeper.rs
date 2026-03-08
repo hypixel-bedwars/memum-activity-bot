@@ -546,7 +546,6 @@ mod tests {
             hypixel_api_key: "test".to_string(),
             database_url: "postgres://postgres:password@localhost:5432/memum_activity_bot".to_string(),
             hypixel_sweep_interval_seconds: 60,
-            discord_sweep_interval_seconds: 15,
             base_level_xp: 100.0,
             level_exponent: 1.5,
             admin_role_ids: Vec::new(),
@@ -555,6 +554,7 @@ mod tests {
             min_message_length: 5,
             message_cooldown_seconds: 30,
             hypixel_refresh_cooldown_seconds: 60,
+            enable_hypixel_sweeper: false,
         }
     }
 

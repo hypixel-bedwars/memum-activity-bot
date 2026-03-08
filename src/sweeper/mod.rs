@@ -38,6 +38,11 @@ pub fn start_hypixel_sweeper(
     interval_seconds: u64,
     config: AppConfig,
 ) {
+    if !config.enable_hypixel_sweeper {
+        info!("Hypixel sweeper disabled.");
+        return;
+    }
+
     let rest = Duration::from_secs(interval_seconds);
 
     tokio::spawn(async move {
@@ -59,25 +64,6 @@ pub fn start_hypixel_sweeper(
                 "Hypixel sweeper: cycle complete, resting."
             );
             tokio::time::sleep(rest).await;
-        }
-    });
-}
-
-/// Spawn the Discord sweeper as a background tokio task.
-pub fn start_discord_sweeper(pool: PgPool, interval_seconds: u64, config: AppConfig) {
-    let interval = Duration::from_secs(interval_seconds);
-
-    tokio::spawn(async move {
-        info!(interval_secs = interval_seconds, "Discord sweeper started.");
-
-        loop {
-            tokio::time::sleep(interval).await;
-
-            debug!("Discord sweeper: starting sweep iteration...");
-
-            if let Err(e) = stat_sweeper::run_discord_sweep(&pool, &config).await {
-                error!(error = %e, "Discord sweeper: sweep iteration failed.");
-            }
         }
     });
 }
@@ -119,9 +105,7 @@ pub(crate) async fn refresh_hypixel_user_if_stale(
         None => true, // never refreshed — always fetch
         Some(last) => {
             let elapsed = now.signed_duration_since(last);
-            elapsed
-                > chrono::Duration::from_std(cooldown)
-                    .unwrap_or(chrono::Duration::seconds(60))
+            elapsed > chrono::Duration::from_std(cooldown).unwrap_or(chrono::Duration::seconds(60))
         }
     };
 

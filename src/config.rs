@@ -27,9 +27,6 @@ pub struct AppConfig {
     /// How often the Hypixel stat sweeper runs, in seconds.
     pub hypixel_sweep_interval_seconds: u64,
 
-    /// How often the Discord stat sweeper runs, in seconds.
-    pub discord_sweep_interval_seconds: u64,
-
     /// Base XP required to reach level 2. Higher levels scale exponentially.
     pub base_level_xp: f64,
 
@@ -59,6 +56,8 @@ pub struct AppConfig {
     /// fetch if the user's `last_hypixel_refresh` is older than this value.
     /// Defaults to 60 if `HYPIXEL_REFRESH_COOLDOWN_SECONDS` is unset.
     pub hypixel_refresh_cooldown_seconds: u64,
+    
+    pub enable_hypixel_sweeper: bool,
 }
 
 impl AppConfig {
@@ -76,10 +75,6 @@ impl AppConfig {
                 .unwrap_or_else(|_| "60".to_string())
                 .parse()
                 .expect("HYPIXEL_SWEEP_INTERVAL_SECONDS must be a valid u64"),
-            discord_sweep_interval_seconds: env::var("DISCORD_SWEEP_INTERVAL_SECONDS")
-                .unwrap_or_else(|_| "15".to_string())
-                .parse()
-                .expect("DISCORD_SWEEP_INTERVAL_SECONDS must be a valid u64"),
             base_level_xp: env::var("BASE_LEVEL_XP")
                 .unwrap_or_else(|_| "100".to_string())
                 .parse()
@@ -113,6 +108,10 @@ impl AppConfig {
                 .unwrap_or_else(|_| "60".to_string())
                 .parse()
                 .expect("HYPIXEL_REFRESH_COOLDOWN_SECONDS must be a valid u64"),
+            enable_hypixel_sweeper: env::var("ENABLE_HYPIXEL_SWEEPER")
+				.unwrap_or_else(|_| "false".to_string())
+				.parse()
+				.expect("ENABLE_HYPIXEL_SWEEPER must be a valid bool"),
         }
     }
 }

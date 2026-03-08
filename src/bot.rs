@@ -37,7 +37,6 @@ pub async fn build(
     let sweep_db = db.clone();
     let sweep_hypixel = hypixel.clone();
     let hypixel_sweep_interval = config.hypixel_sweep_interval_seconds;
-    let discord_sweep_interval = config.discord_sweep_interval_seconds;
     let sweep_config = config.clone();
     let lb_db = db.clone();
     let lb_config = config.clone();
@@ -113,7 +112,6 @@ pub async fn build(
                     hypixel_sweep_interval,
                     sweep_config.clone(),
                 );
-                sweeper::start_discord_sweeper(sweep_db, discord_sweep_interval, sweep_config);
 
                 // Start persistent leaderboard updater.
                 leaderboard_updater::start_leaderboard_updater(
