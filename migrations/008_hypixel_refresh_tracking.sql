@@ -14,3 +14,6 @@
 ALTER TABLE users
     ADD COLUMN last_hypixel_refresh  TIMESTAMPTZ,
     ADD COLUMN last_command_activity TIMESTAMPTZ;
+    
+CREATE INDEX idx_users_last_hypixel_refresh
+ON users (last_hypixel_refresh);

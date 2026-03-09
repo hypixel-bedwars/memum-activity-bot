@@ -76,7 +76,7 @@ pub async fn level(
     // Stamps last_command_activity and refreshes Hypixel stats if the cooldown
     // has elapsed.  The command already deferred above so Discord's "thinking…"
     // indicator covers any API latency.
-    sweeper::refresh_hypixel_user_if_stale(&data.db, &data.hypixel, &db_user, &data.config).await;
+    sweeper::hypixel_sweeper::refresh_hypixel_user(&data.db, &data.hypixel, &db_user, &data.config).await;
 
     // XP & level data
     let xp_row = queries::get_xp(&data.db, db_user.id).await?;

@@ -36,7 +36,6 @@ pub async fn build(
     // Clone values that need to move into closures.
     let sweep_db = db.clone();
     let sweep_hypixel = hypixel.clone();
-    let hypixel_sweep_interval = config.hypixel_sweep_interval_seconds;
     let sweep_config = config.clone();
     let lb_db = db.clone();
     let lb_config = config.clone();
@@ -106,12 +105,31 @@ pub async fn build(
                 }
 
                 // Start background sweepers.
-                sweeper::start_hypixel_sweeper(
-                    sweep_db.clone(),
-                    sweep_hypixel,
-                    hypixel_sweep_interval,
-                    sweep_config.clone(),
-                );
+                let sweep_db_clone = sweep_db.clone();
+                let sweep_hypixel_clone = sweep_hypixel.clone();
+                let sweep_config_clone = sweep_config.clone();
+                
+                tokio::spawn(async move {
+                    info!("Hypixel background sweeper started.");
+                
+                    let mut ticker = tokio::time::interval(
+                        std::time::Duration::from_secs(
+                            sweep_config_clone.hypixel_sweep_interval_seconds
+                        )
+                    );
+                
+                    loop {
+                        ticker.tick().await;
+                
+                        if let Err(e) = sweeper::hypixel_sweeper::run_hypixel_stale_sweep(
+                            &sweep_db_clone,
+                            &sweep_hypixel_clone,
+                            &sweep_config_clone,
+                        ).await {
+                            tracing::error!(error = %e, "Hypixel stale sweep failed");
+                        }
+                    }
+                });
 
                 // Start persistent leaderboard updater.
                 leaderboard_updater::start_leaderboard_updater(

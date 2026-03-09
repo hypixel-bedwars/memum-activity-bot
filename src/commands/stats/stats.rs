@@ -46,7 +46,7 @@ pub async fn stats(
     };
 
     // on-demand Hypixel refresh
-    sweeper::refresh_hypixel_user_if_stale(
+    sweeper::hypixel_sweeper::refresh_hypixel_user(
         &data.db,
         &data.hypixel,
         &db_user,

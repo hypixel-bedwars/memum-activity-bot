@@ -1147,3 +1147,27 @@ pub async fn get_milestones_with_counts(
     .fetch_all(pool)
     .await
 }
+
+
+pub async fn get_users_with_expired_hypixel_stats(
+    pool: &PgPool,
+    cutoff: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<DbUser>, sqlx::Error> {
+    debug!(
+        "queries::get_users_with_expired_hypixel_stats: cutoff={}, limit={}",
+        cutoff, limit
+    );
+
+    sqlx::query_as::<_, DbUser>(
+        "SELECT *
+         FROM users
+         WHERE COALESCE(last_hypixel_refresh, 'epoch') < $1
+         ORDER BY last_hypixel_refresh ASC NULLS FIRST
+         LIMIT $2"
+    )
+    .bind(cutoff)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
