@@ -26,7 +26,6 @@ pub async fn refresh_hypixel_user(
 ) -> bool {
     let now = Utc::now();
 
-    // Record activity
     if let Err(e) = queries::update_last_command_activity(pool, user.id, &now).await {
         warn!(
             user_id = user.id,
@@ -41,7 +40,8 @@ pub async fn refresh_hypixel_user(
         None => true,
         Some(last) => {
             let elapsed = now.signed_duration_since(last);
-            elapsed > chrono::Duration::from_std(cooldown).unwrap_or(chrono::Duration::seconds(60))
+            elapsed > chrono::Duration::from_std(cooldown)
+                .unwrap_or(chrono::Duration::seconds(60))
         }
     };
 
@@ -76,19 +76,22 @@ pub async fn run_hypixel_stale_sweep(
     hypixel: &Arc<HypixelClient>,
     config: &AppConfig,
 ) -> Result<()> {
+
+    info!("Starting Hypixel stale sweep.");
+
     let cutoff = Utc::now() - chrono::Duration::hours(2);
 
     let users = queries::get_users_with_expired_hypixel_stats(pool, cutoff, 10).await?;
 
     if users.is_empty() {
-        debug!("Hypixel sweep: no expired users.");
+        info!("Hypixel sweep: no expired users.");
         return Ok(());
     }
 
-    debug!("Hypixel sweep refreshing {} expired users.", users.len());
+    info!(expired_users = users.len(), "Hypixel sweep refreshing expired users.");
 
-    for user in users {
-        if let Err(e) = refresh_user(pool, hypixel, &user, config).await {
+    for user in &users {
+        if let Err(e) = refresh_user(pool, hypixel, user, config).await {
             warn!(
                 user_id = user.id,
                 error = %e,
@@ -98,6 +101,8 @@ pub async fn run_hypixel_stale_sweep(
 
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+
+    info!(refreshed = users.len(), "Hypixel stale sweep completed.");
 
     Ok(())
 }
@@ -111,12 +116,17 @@ pub async fn run_full_hypixel_sweep(
     hypixel: &Arc<HypixelClient>,
     config: &AppConfig,
 ) -> bool {
+
+    info!("Starting full Hypixel sweep.");
+
     let users = queries::get_all_registered_users(pool)
         .await
         .unwrap_or_default();
 
-    for user in users {
-        if let Err(e) = refresh_user(pool, hypixel, &user, config).await {
+    debug!(total_users = users.len(), "Full Hypixel sweep users.");
+
+    for user in &users {
+        if let Err(e) = refresh_user(pool, hypixel, user, config).await {
             warn!(
                 user_id = user.id,
                 error = %e,
@@ -127,7 +137,7 @@ pub async fn run_full_hypixel_sweep(
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    info!("All player sweep completed.");
+    info!(total_users = users.len(), "All player sweep completed.");
 
     true
 }
@@ -142,17 +152,16 @@ async fn refresh_user(
     user: &DbUser,
     config: &AppConfig,
 ) -> Result<()> {
-    // Preemptively update the refresh timestamp to reduce the chance of
-    // multiple concurrent sweepers refreshing the same user simultaneously.
+
+    debug!(user_id = user.id, "Refreshing Hypixel user.");
+
     queries::update_last_hypixel_refresh(pool, user.id, &Utc::now()).await?;
 
     let player_data = hypixel.fetch_player(&user.minecraft_uuid).await?;
 
     let bw = &player_data.bedwars;
 
-    // ---------------------------------------------------------
     // Rank persistence
-    // ---------------------------------------------------------
 
     let rank_db_str = player_data.rank.as_db_str();
     let rank_plus = player_data.rank_plus_color.as_deref();
@@ -178,10 +187,6 @@ async fn refresh_user(
         }
     }
 
-    // ---------------------------------------------------------
-    // Stat delta computation
-    // ---------------------------------------------------------
-
     let now = Utc::now();
 
     let guild_config = load_guild_config(pool, user.guild_id).await;
@@ -189,6 +194,7 @@ async fn refresh_user(
     let mut deltas: Vec<StatDelta> = Vec::new();
 
     for stat_name in guild_config.xp_config.keys() {
+
         let new_value = match bw.stats.get(stat_name) {
             Some(&v) => v,
             None => continue,
@@ -198,7 +204,6 @@ async fn refresh_user(
 
         if previous.is_none() {
             queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, now).await?;
-
             continue;
         }
 
@@ -220,10 +225,6 @@ async fn refresh_user(
         }
     }
 
-    // ---------------------------------------------------------
-    // Apply XP pipeline
-    // ---------------------------------------------------------
-
     apply_stat_deltas(
         pool,
         user,
@@ -235,10 +236,6 @@ async fn refresh_user(
         "Hypixel sweep",
     )
     .await?;
-
-    // ---------------------------------------------------------
-    // Update refresh timestamp
-    // ---------------------------------------------------------
 
     if let Err(e) = queries::update_last_hypixel_refresh(pool, user.id, &now).await {
         warn!(

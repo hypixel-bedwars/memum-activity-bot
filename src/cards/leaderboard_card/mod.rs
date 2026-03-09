@@ -9,7 +9,7 @@ use image::{DynamicImage, GenericImageView, ImageFormat, Rgba, RgbaImage};
 use tracing::debug;
 
 use crate::font::renderer::FontRenderer;
-use crate::hypixel::models::{plus_color_to_rgba, HypixelRank};
+use crate::hypixel::models::{HypixelRank, plus_color_to_rgba};
 
 // ---------------------------------------------------------------------------
 // Colour constants
@@ -118,11 +118,32 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
     let header_y = MARGIN;
     let header_w = IMG_W - MARGIN * 2;
 
+    // == COLUMN HEADERS =======================================================
+    let col_header_y = header_y + 10;
+
+    // Column layout
+    let rank_column_x = header_x + 20;
+
+    // Center of the entire "rank badge + username" column
+    let username_column_center = header_x + 350;
+
     let level_column_center = header_x + 700;
     let xp_column_center = header_x + header_w - 120;
 
-    // == COLUMN HEADERS =======================================================
-    let col_header_y = header_y + 10;
+    // Rank header
+    font.render_text(&mut img, rank_column_x, col_header_y, "Rank", 3, MUTED);
+
+    let username_header = "Username";
+    let username_header_w = font.measure_text(username_header, 3);
+
+    font.render_text(
+        &mut img,
+        username_column_center - username_header_w / 2,
+        col_header_y,
+        username_header,
+        3,
+        MUTED,
+    );
 
     let level_header = "Level";
     let level_header_w = font.measure_text(level_header, 3);
@@ -169,9 +190,9 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
             MUTED
         };
         let rank_text = format!("#{}", row.rank);
-        font.render_text(
+        font.render_formatted_shadowed(
             &mut img,
-            header_x + 20,
+            rank_column_x,
             row_y + 16,
             &rank_text,
             5,
@@ -179,7 +200,6 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         );
 
         // Hypixel rank badge + username, starting after the position number
-        let name_x = header_x + 100;
         let text_y = row_y + 14;
         let text_scale = 5u32;
 
@@ -196,17 +216,30 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         };
         let hypixel_rank = HypixelRank::from_api(new_pkg, monthly_pkg);
 
-        let mut cursor_x = name_x;
+        // Measure rank badge width (must come after from_api so hypixel_rank is in scope)
+        let mut badge_w = 0;
+
+        if hypixel_rank != HypixelRank::None {
+            let label = hypixel_rank.display_label();
+            badge_w = font.measure_text(label, text_scale) + 6;
+        }
+
+        // Measure username width
+        let username_w = font.measure_text(&row.username, text_scale);
+
+        // Combined width of the whole badge + username block
+        let total_name_w = badge_w + username_w;
+
+        // Center the combined block inside the username column
+        let mut cursor_x = username_column_center - total_name_w / 2;
 
         let name_col = hypixel_rank.name_color();
 
         debug!(
             "rank debug: username={} raw_rank={:?} parsed_rank={:?}",
-            row.username,
-            raw_rank,
-            hypixel_rank
+            row.username, raw_rank, hypixel_rank
         );
-        
+
         if hypixel_rank != HypixelRank::None {
             // Decompose the label into coloured segments.
             // e.g. "[MVP+]" → "[MVP" in cyan, "+" in gold, "]" in cyan.
@@ -236,12 +269,16 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
 
                 // Render ']' in name color
                 if !after.is_empty() {
-                    font.render_text(&mut img, cursor_x, text_y, after, text_scale, name_col);
+                    font.render_formatted_shadowed(
+                        &mut img, cursor_x, text_y, after, text_scale, name_col,
+                    );
                     cursor_x += font.measure_text(after, text_scale);
                 }
             } else {
                 // No '+' (e.g. "[VIP]") — render entire label in name color
-                font.render_text(&mut img, cursor_x, text_y, label, text_scale, name_col);
+                font.render_formatted_shadowed(
+                    &mut img, cursor_x, text_y, label, text_scale, name_col,
+                );
                 cursor_x += font.measure_text(label, text_scale);
             }
 
@@ -249,8 +286,8 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
             cursor_x += 6;
         }
 
-        // Username in white
-        font.render_text(
+        // Username
+        font.render_formatted_shadowed(
             &mut img,
             cursor_x,
             text_y,
@@ -266,16 +303,22 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         let level_x = level_column_center - level_w / 2;
 
         // Level
-        let level_text = format!("{}", row.level);
-        font.render_text(&mut img, level_x, row_y + 14, &level_text, text_scale, CYAN);
+        font.render_formatted_shadowed(
+            &mut img,
+            level_x,
+            row_y + 14,
+            &level_text,
+            text_scale,
+            CYAN,
+        );
         // XP right aligned
         let xp_text = format_xp(row.total_xp);
-        let xp_w = font.measure_text(&xp_text, 3);
+        let xp_w = font.measure_text(&xp_text, text_scale);
 
         let xp_column_center = header_x + header_w - 120;
         let xp_x = xp_column_center - xp_w / 2;
 
-        font.render_text(&mut img, xp_x, row_y + 14, &xp_text, 3, WHITE);
+        font.render_formatted_shadowed(&mut img, xp_x, row_y + 14, &xp_text, text_scale, WHITE);
     }
 
     // == EMPTY STATE ==========================================================

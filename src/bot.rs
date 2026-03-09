@@ -12,13 +12,13 @@ use tracing::info;
 use crate::commands;
 use crate::commands::leaderboard::leaderboard as lb;
 use crate::config::AppConfig;
+use crate::database::models::MessageValidationState;
 use crate::discord_stats::tracker;
 use crate::events::events;
 use crate::hypixel::client::HypixelClient;
-use crate::utils::leaderboard_updater;
 use crate::shared::types::{Data, Error};
 use crate::sweeper;
-use crate::database::models::MessageValidationState;
+use crate::utils::leaderboard_updater;
 
 /// Build and return the Poise framework, ready to be started.
 ///
@@ -27,10 +27,7 @@ use crate::database::models::MessageValidationState;
 /// 2. Configures Poise with all commands, the event handler, and the
 ///    pre-command hook.
 /// 3. In the `setup` callback, starts the stat sweeper background task.
-pub async fn build(
-    config: AppConfig,
-    db: PgPool,
-) -> Result<poise::Framework<Data, Error>, Error> {
+pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Data, Error>, Error> {
     let hypixel = Arc::new(HypixelClient::new(config.hypixel_api_key.clone()));
 
     // Clone values that need to move into closures.
@@ -65,6 +62,7 @@ pub async fn build(
                         let data = ctx.data();
                         tracker::record_command_usage(
                             &data.db,
+                            data,
                             ctx.author().id.get() as i64,
                             guild_id.get() as i64,
                         )
@@ -108,24 +106,24 @@ pub async fn build(
                 let sweep_db_clone = sweep_db.clone();
                 let sweep_hypixel_clone = sweep_hypixel.clone();
                 let sweep_config_clone = sweep_config.clone();
-                
+
                 tokio::spawn(async move {
                     info!("Hypixel background sweeper started.");
-                
-                    let mut ticker = tokio::time::interval(
-                        std::time::Duration::from_secs(
-                            sweep_config_clone.hypixel_sweep_interval_seconds
-                        )
-                    );
-                
+
+                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
+                        sweep_config_clone.hypixel_sweep_interval_seconds,
+                    ));
+
                     loop {
                         ticker.tick().await;
-                
+
                         if let Err(e) = sweeper::hypixel_sweeper::run_hypixel_stale_sweep(
                             &sweep_db_clone,
                             &sweep_hypixel_clone,
                             &sweep_config_clone,
-                        ).await {
+                        )
+                        .await
+                        {
                             tracing::error!(error = %e, "Hypixel stale sweep failed");
                         }
                     }
