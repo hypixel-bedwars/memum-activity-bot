@@ -107,6 +107,8 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
                 let sweep_hypixel_clone = sweep_hypixel.clone();
                 let sweep_config_clone = sweep_config.clone();
 
+                // Background sweeper, fetches hypixel stats 
+                // only if the data of a user has not been updated in 2 hours
                 tokio::spawn(async move {
                     info!("Hypixel background sweeper started.");
 
@@ -128,6 +130,9 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
                         }
                     }
                 });
+                
+                // Start the daily snapshot task.
+                tokio::spawn(sweeper::daily_snapshot::start_daily_snapshot_loop(db.clone()));
 
                 // Start persistent leaderboard updater.
                 leaderboard_updater::start_leaderboard_updater(

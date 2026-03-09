@@ -110,10 +110,15 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
     let name_y: u32 = 29;
     let name_scale: u32 = 3;
     let mut name_cursor_x: u32 = 124;
+    
+    let name_col = if hypixel_rank != HypixelRank::None {
+		hypixel_rank.name_color()
+	} else {
+		MUTED
+	};
 
     if hypixel_rank != HypixelRank::None {
         let label = hypixel_rank.display_label();
-        let name_col = hypixel_rank.name_color();
         let plus_color = plus_color_to_rgba(params.hypixel_rank_plus_color.as_deref());
 
         if let Some(plus_pos) = label.find('+') {
@@ -161,7 +166,7 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
         name_y,
         &params.minecraft_username,
         name_scale,
-        WHITE,
+        name_col,
     );
 
     font.render_text(

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Mutex};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 /// Database row models.
 ///
@@ -222,4 +222,17 @@ pub struct DbXPEvent {
 pub struct MessageValidationState {
     pub last_counted: Mutex<HashMap<i64, OffsetDateTime>>,
     pub last_message: Mutex<HashMap<i64, String>>,
+}
+
+// ---------------------------------------------------------------------------
+// Daily snapshots
+// ---------------------------------------------------------------------------
+// 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DbDailySnapshot {
+    pub user_id: i64,
+    pub stat_name: String,
+    pub stat_value: f64,
+    pub snapshot_date: NaiveDate,
+    pub created_at: DateTime<Utc>,
 }

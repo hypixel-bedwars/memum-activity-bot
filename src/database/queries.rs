@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 /// Database query functions.
 ///
@@ -12,8 +12,8 @@ use tracing::debug;
 use uuid::Uuid;
 
 use super::models::{
-    DbGuild, DbMilestone, DbPersistentLeaderboard, DbStatDelta, DbStatsSnapshot, DbSweepCursor,
-    DbUser, DbXP, LeaderboardEntry, MilestoneWithCount,
+    DbDailySnapshot, DbGuild, DbMilestone, DbPersistentLeaderboard, DbStatDelta, DbStatsSnapshot,
+    DbSweepCursor, DbUser, DbXP, LeaderboardEntry, MilestoneWithCount,
 };
 
 // =========================================================================
@@ -1148,7 +1148,6 @@ pub async fn get_milestones_with_counts(
     .await
 }
 
-
 pub async fn get_users_with_expired_hypixel_stats(
     pool: &PgPool,
     cutoff: DateTime<Utc>,
@@ -1170,4 +1169,80 @@ pub async fn get_users_with_expired_hypixel_stats(
     .bind(limit)
     .fetch_all(pool)
     .await
+}
+
+// ========================================================================
+// Daily snapshots
+// =======================================================================
+
+pub async fn insert_daily_snapshot(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO daily_snapshots (user_id, stat_name, stat_value, snapshot_date)
+        SELECT user_id, stat_name, stat_value, CURRENT_DATE
+        FROM (
+            SELECT DISTINCT ON (user_id, stat_name)
+                user_id,
+                stat_name,
+                stat_value
+            FROM hypixel_stats_snapshot
+            ORDER BY user_id, stat_name, timestamp DESC
+        ) latest
+        ON CONFLICT (user_id, stat_name, snapshot_date) DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn get_daily_snapshot(
+    pool: &PgPool,
+    user_id: i64,
+    date: NaiveDate,
+) -> Result<Vec<DbDailySnapshot>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, DbDailySnapshot>(
+        r#"
+        SELECT user_id, stat_name, stat_value, snapshot_date, created_at
+        FROM daily_snapshots
+        WHERE user_id = $1
+        AND snapshot_date = $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(date)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+pub async fn get_stat_delta_between(
+    pool: &PgPool,
+    user_id: i64,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Result<Vec<(String, f64)>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, f64)>(
+        r#"
+        SELECT
+            e.stat_name,
+            e.stat_value - s.stat_value AS delta
+        FROM daily_snapshots s
+        JOIN daily_snapshots e
+            ON s.user_id = e.user_id
+           AND s.stat_name = e.stat_name
+        WHERE s.user_id = $1
+        AND s.snapshot_date = $2
+        AND e.snapshot_date = $3
+        "#,
+    )
+    .bind(user_id)
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
 }
