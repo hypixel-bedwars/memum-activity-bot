@@ -1,6 +1,6 @@
 use serenity::all::FullEvent;
 use sqlx::PgPool;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use chrono::Utc;
 
@@ -85,7 +85,14 @@ async fn increment_stat(
     // ----------------------------------------------------
     let user = match queries::get_user_by_discord_id(pool, discord_user_id, guild_id).await {
         Ok(Some(u)) => u,
-        Ok(None) => return,
+        Ok(None) => {
+            warn!(
+                discord_user_id,
+                guild_id,
+                "user not registered, skipping stat increment"
+            );
+            return;
+        },
         Err(e) => {
             error!(error = %e, "failed to fetch user");
             return;
