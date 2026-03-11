@@ -238,7 +238,7 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
         font.render_text(&mut img, 28, 214, "No changes yet", 2, MUTED);
     } else {
         let col1_x: u32 = 28;
-        let col2_x: u32 = 520;
+        let col2_x: u32 = 260;
         let base_y: u32 = 214;
         let step: u32 = 24;
 
