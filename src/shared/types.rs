@@ -9,7 +9,7 @@ use sqlx::PgPool;
 
 use crate::commands::leaderboard::leaderboard::LeaderboardCache;
 use crate::config::AppConfig;
-use crate::database::models::MessageValidationState;
+use crate::database::models::{MessageValidationState, VoiceSessionState};
 use crate::hypixel::client::HypixelClient;
 use poise::serenity_prelude as serenity;
 
@@ -43,6 +43,11 @@ pub struct Data {
     /// State for message validation, used by the Discord activity tracker to determine
     /// if a message is valid for XP (e.g. not a bot command, not a duplicate, etc.).
     pub message_validation: MessageValidationState,
+
+    /// In-memory voice session tracker — maps discord_user_id to the UTC time
+    /// they joined a voice channel. Populated on VoiceStateUpdate join events,
+    /// consumed on leave events to compute `voice_minutes`.
+    pub voice_sessions: VoiceSessionState,
 
     /// Discord HTTP client for sending messages outside command contexts.
     pub http: Arc<serenity::Http>,

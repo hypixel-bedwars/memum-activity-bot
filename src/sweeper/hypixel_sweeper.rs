@@ -325,6 +325,10 @@ async fn apply_stat_deltas(
     let reward_by_stat: std::collections::HashMap<&str, &crate::xp::calculator::XPReward> =
         rewards.iter().map(|r| (r.stat_name.as_str(), r)).collect();
 
+    // Collect (stat_name, delta_id, difference) tuples so we can award
+    // event XP after the transaction commits.
+    let mut committed_deltas: Vec<(String, i64, f64)> = Vec::new();
+
     for delta in &positive_deltas {
         let delta_id = queries::insert_stat_delta_in_tx(
             &mut tx,
@@ -337,6 +341,8 @@ async fn apply_stat_deltas(
             now,
         )
         .await?;
+
+        committed_deltas.push((delta.stat_name.clone(), delta_id, delta.difference));
 
         // Only write an xp_events row when a multiplier is configured for
         // this stat. Unknown stats are still recorded in stat_deltas for
@@ -422,6 +428,43 @@ async fn apply_stat_deltas(
     }
 
     tx.commit().await?;
+
+    // Award event XP for each committed delta (post-commit, pool-only).
+    let mut total_event_xp = 0.0_f64;
+    for (stat_name, delta_id, difference) in &committed_deltas {
+        match queries::award_event_xp_for_delta(
+            pool,
+            user.guild_id,
+            user.id,
+            stat_name,
+            *delta_id,
+            *difference,
+            now,
+        )
+        .await
+        {
+            Ok(xp) => total_event_xp += xp,
+            Err(e) => {
+                warn!(
+                    user_id = user.id,
+                    stat_name,
+                    error = %e,
+                    "Failed to award event XP for delta."
+                );
+            }
+        }
+    }
+
+    // If event XP was awarded, add it to the user's global total.
+    if total_event_xp > 0.0 {
+        if let Err(e) = queries::increment_xp(pool, user.id, total_event_xp, now).await {
+            warn!(
+                user_id = user.id,
+                error = %e,
+                "Failed to increment XP for event rewards."
+            );
+        }
+    }
 
     // Milestone hook
     // Runs outside the transaction so a hook failure never rolls back XP.

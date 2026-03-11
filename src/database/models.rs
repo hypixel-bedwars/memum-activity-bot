@@ -275,3 +275,88 @@ pub struct DbDailySnapshot {
     pub snapshot_date: NaiveDate,
     pub created_at: DateTime<Utc>,
 }
+
+// ---------------------------------------------------------------------------
+// events
+// ---------------------------------------------------------------------------
+
+/// A row from the `events` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbEvent {
+    pub id: i64,
+    pub guild_id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub start_date: DateTime<Utc>,
+    pub end_date: DateTime<Utc>,
+    pub start_snapshot_date: Option<NaiveDate>,
+    pub end_snapshot_date: Option<NaiveDate>,
+    /// One of `"pending"`, `"active"`, or `"ended"`.
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// event_stats
+// ---------------------------------------------------------------------------
+
+/// A row from the `event_stats` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbEventStat {
+    pub id: i64,
+    pub event_id: i64,
+    pub stat_name: String,
+    pub xp_per_unit: f64,
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// event_xp
+// ---------------------------------------------------------------------------
+
+/// A row from the `event_xp` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbEventXP {
+    pub id: i64,
+    pub event_id: i64,
+    pub user_id: i64,
+    pub stat_name: String,
+    pub delta_id: Option<i64>,
+    pub units: i32,
+    pub xp_per_unit: f64,
+    pub xp_earned: f64,
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Event leaderboard entry (query result, not a table)
+// ---------------------------------------------------------------------------
+
+/// A single entry in an event leaderboard — user plus their total event XP.
+#[derive(Debug, Clone, FromRow)]
+pub struct EventLeaderboardEntry {
+    pub discord_user_id: i64,
+    pub minecraft_username: Option<String>,
+    pub total_event_xp: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Voice session state
+// ---------------------------------------------------------------------------
+
+/// In-memory map from `discord_user_id` to the UTC timestamp when they
+/// joined a voice channel. Used to compute voice_minutes on leave.
+pub type VoiceSessionState = Arc<Mutex<HashMap<i64, DateTime<Utc>>>>;
+
+// ---------------------------------------------------------------------------
+// Backfill
+// ---------------------------------------------------------------------------
+
+/// Summary returned after a retroactive event XP backfill completes.
+#[derive(Debug, Clone, Default)]
+pub struct BackfillSummary {
+    pub deltas_processed: i64,
+    pub total_xp_awarded: f64,
+    pub users_affected: i64,
+}

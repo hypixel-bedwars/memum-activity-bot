@@ -8,12 +8,14 @@ use serde_json::Value;
 /// Some functions are not yet called but exist as part of the public query API
 /// for extensions and future commands.
 use sqlx::{PgPool, Postgres, Transaction};
-use tracing::debug;
+use std::collections::HashMap;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::models::{
-    DbDailySnapshot, DbGuild, DbMilestone, DbPersistentLeaderboard, DbStatDelta, DbStatsSnapshot,
-    DbSweepCursor, DbUser, DbXP, LeaderboardEntry, MilestoneWithCount,
+    BackfillSummary, DbDailySnapshot, DbEvent, DbEventStat, DbGuild, DbMilestone,
+    DbPersistentLeaderboard, DbStatDelta, DbStatsSnapshot, DbSweepCursor, DbUser, DbXP,
+    EventLeaderboardEntry, LeaderboardEntry, MilestoneWithCount,
 };
 
 // =========================================================================
@@ -1253,6 +1255,26 @@ pub async fn insert_daily_snapshot_for_date(
     .execute(pool)
     .await?;
 
+    // Snapshot Discord stats
+    sqlx::query(
+        r#"
+        INSERT INTO daily_snapshots (user_id, stat_name, stat_value, snapshot_date)
+        SELECT user_id, stat_name, stat_value, $1::date
+        FROM (
+            SELECT DISTINCT ON (user_id, stat_name)
+                user_id,
+                stat_name,
+                stat_value
+            FROM discord_stats_snapshot
+            ORDER BY user_id, stat_name, timestamp DESC
+        ) latest
+        ON CONFLICT (user_id, stat_name, snapshot_date) DO NOTHING
+        "#,
+    )
+    .bind(date)
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -1311,4 +1333,716 @@ pub async fn get_stat_delta_between(
     .await?;
 
     Ok(rows)
+}
+
+// =========================================================================
+// events
+// =========================================================================
+
+/// Create a new event and immediately seed its `event_stats` from the guild's
+/// current `xp_config`. Returns the newly inserted `DbEvent`.
+pub async fn create_event(
+    pool: &PgPool,
+    guild_id: i64,
+    name: &str,
+    description: Option<&str>,
+    start_date: &DateTime<Utc>,
+    end_date: &DateTime<Utc>,
+) -> Result<DbEvent, sqlx::Error> {
+    debug!(
+        "queries::create_event: guild_id={}, name={}, start={}, end={}",
+        guild_id, name, start_date, end_date
+    );
+
+    let event: DbEvent = sqlx::query_as::<_, DbEvent>(
+        "INSERT INTO events (guild_id, name, description, start_date, end_date)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *",
+    )
+    .bind(guild_id)
+    .bind(name)
+    .bind(description)
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(event)
+}
+
+/// Retrieve a single event by its ID and guild.
+pub async fn get_event(
+    pool: &PgPool,
+    guild_id: i64,
+    event_id: i64,
+) -> Result<Option<DbEvent>, sqlx::Error> {
+    debug!(
+        "queries::get_event: guild_id={}, event_id={}",
+        guild_id, event_id
+    );
+    sqlx::query_as::<_, DbEvent>("SELECT * FROM events WHERE id = $1 AND guild_id = $2")
+        .bind(event_id)
+        .bind(guild_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Retrieve a single event by name within a guild.
+pub async fn get_event_by_name(
+    pool: &PgPool,
+    guild_id: i64,
+    name: &str,
+) -> Result<Option<DbEvent>, sqlx::Error> {
+    debug!(
+        "queries::get_event_by_name: guild_id={}, name={}",
+        guild_id, name
+    );
+    sqlx::query_as::<_, DbEvent>("SELECT * FROM events WHERE guild_id = $1 AND name = $2")
+        .bind(guild_id)
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}
+
+/// List all events for a guild, ordered by start_date descending.
+pub async fn list_events(pool: &PgPool, guild_id: i64) -> Result<Vec<DbEvent>, sqlx::Error> {
+    debug!("queries::list_events: guild_id={}", guild_id);
+    sqlx::query_as::<_, DbEvent>(
+        "SELECT * FROM events WHERE guild_id = $1 ORDER BY start_date DESC",
+    )
+    .bind(guild_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// List events for a guild filtered by status.
+pub async fn list_events_by_status(
+    pool: &PgPool,
+    guild_id: i64,
+    status: &str,
+) -> Result<Vec<DbEvent>, sqlx::Error> {
+    debug!(
+        "queries::list_events_by_status: guild_id={}, status={}",
+        guild_id, status
+    );
+    sqlx::query_as::<_, DbEvent>(
+        "SELECT * FROM events WHERE guild_id = $1 AND status = $2 ORDER BY start_date DESC",
+    )
+    .bind(guild_id)
+    .bind(status)
+    .fetch_all(pool)
+    .await
+}
+
+/// Update mutable fields of an event. Only fields with `Some(...)` are changed.
+/// Returns `Ok(true)` if the update succeeded, `Ok(false)` if not found or ended.
+pub async fn update_event(
+    pool: &PgPool,
+    guild_id: i64,
+    event_id: i64,
+    name: Option<&str>,
+    description: Option<&str>,
+    start_date: Option<&DateTime<Utc>>,
+    end_date: Option<&DateTime<Utc>>,
+) -> Result<bool, sqlx::Error> {
+    debug!(
+        "queries::update_event: guild_id={}, event_id={}",
+        guild_id, event_id
+    );
+    let rows = sqlx::query(
+        "UPDATE events
+         SET name        = COALESCE($3, name),
+             description = COALESCE($4, description),
+             start_date  = COALESCE($5, start_date),
+             end_date    = COALESCE($6, end_date),
+             updated_at  = NOW()
+         WHERE id = $1 AND guild_id = $2 AND status != 'ended'",
+    )
+    .bind(event_id)
+    .bind(guild_id)
+    .bind(name)
+    .bind(description)
+    .bind(start_date)
+    .bind(end_date)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(rows > 0)
+}
+
+/// Delete an event that has not yet ended.
+/// Returns `Ok(true)` if deleted, `Ok(false)` if not found or already ended.
+pub async fn delete_event(
+    pool: &PgPool,
+    guild_id: i64,
+    event_id: i64,
+) -> Result<bool, sqlx::Error> {
+    debug!(
+        "queries::delete_event: guild_id={}, event_id={}",
+        guild_id, event_id
+    );
+    let rows =
+        sqlx::query("DELETE FROM events WHERE id = $1 AND guild_id = $2 AND status != 'ended'")
+            .bind(event_id)
+            .bind(guild_id)
+            .execute(pool)
+            .await?
+            .rows_affected();
+    Ok(rows > 0)
+}
+
+/// Transition pending → active and active → ended events based on wall-clock time,
+/// and set the appropriate snapshot dates.
+pub async fn update_event_statuses(pool: &PgPool) -> Result<(), sqlx::Error> {
+    debug!("queries::update_event_statuses");
+
+    // pending → active
+    sqlx::query(
+        "UPDATE events
+         SET status = 'active',
+             start_snapshot_date = (
+                 SELECT MAX(snapshot_date)
+                 FROM daily_snapshots
+                 WHERE snapshot_date <= start_date::date
+             ),
+             updated_at = NOW()
+         WHERE status = 'pending' AND start_date <= NOW()",
+    )
+    .execute(pool)
+    .await?;
+
+    // active → ended
+    sqlx::query(
+        "UPDATE events
+         SET status = 'ended',
+             end_snapshot_date = (
+                 SELECT MAX(snapshot_date)
+                 FROM daily_snapshots
+                 WHERE snapshot_date <= end_date::date
+             ),
+             updated_at = NOW()
+         WHERE status = 'active' AND end_date <= NOW()",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+// =========================================================================
+// event_stats
+// =========================================================================
+
+/// Add a stat to an event. Returns `Ok(true)` if inserted, `Ok(false)` if already exists.
+pub async fn add_event_stat(
+    pool: &PgPool,
+    event_id: i64,
+    stat_name: &str,
+    xp_per_unit: f64,
+) -> Result<bool, sqlx::Error> {
+    debug!(
+        "queries::add_event_stat: event_id={}, stat_name={}, xp_per_unit={}",
+        event_id, stat_name, xp_per_unit
+    );
+    let rows = sqlx::query(
+        "INSERT INTO event_stats (event_id, stat_name, xp_per_unit)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (event_id, stat_name) DO NOTHING",
+    )
+    .bind(event_id)
+    .bind(stat_name)
+    .bind(xp_per_unit)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(rows > 0)
+}
+
+/// Remove a stat from an event. Returns `Ok(true)` if removed.
+pub async fn remove_event_stat(
+    pool: &PgPool,
+    event_id: i64,
+    stat_name: &str,
+) -> Result<bool, sqlx::Error> {
+    debug!(
+        "queries::remove_event_stat: event_id={}, stat_name={}",
+        event_id, stat_name
+    );
+    let rows = sqlx::query("DELETE FROM event_stats WHERE event_id = $1 AND stat_name = $2")
+        .bind(event_id)
+        .bind(stat_name)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(rows > 0)
+}
+
+/// Update the XP-per-unit for a stat in an event. Returns `Ok(true)` if updated.
+pub async fn edit_event_stat(
+    pool: &PgPool,
+    event_id: i64,
+    stat_name: &str,
+    xp_per_unit: f64,
+) -> Result<bool, sqlx::Error> {
+    debug!(
+        "queries::edit_event_stat: event_id={}, stat_name={}, xp_per_unit={}",
+        event_id, stat_name, xp_per_unit
+    );
+    let rows = sqlx::query(
+        "UPDATE event_stats SET xp_per_unit = $3 WHERE event_id = $1 AND stat_name = $2",
+    )
+    .bind(event_id)
+    .bind(stat_name)
+    .bind(xp_per_unit)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(rows > 0)
+}
+
+/// List all stats configured for an event.
+pub async fn get_event_stats(
+    pool: &PgPool,
+    event_id: i64,
+) -> Result<Vec<DbEventStat>, sqlx::Error> {
+    debug!("queries::get_event_stats: event_id={}", event_id);
+    sqlx::query_as::<_, DbEventStat>(
+        "SELECT * FROM event_stats WHERE event_id = $1 ORDER BY stat_name",
+    )
+    .bind(event_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Seed event_stats for a new event from a guild's xp_config map.
+/// Silently skips stats that already exist (ON CONFLICT DO NOTHING).
+pub async fn seed_event_stats_from_xp_config(
+    pool: &PgPool,
+    event_id: i64,
+    xp_config: &std::collections::HashMap<String, f64>,
+) -> Result<(), sqlx::Error> {
+    debug!(
+        "queries::seed_event_stats_from_xp_config: event_id={}, stats={}",
+        event_id,
+        xp_config.len()
+    );
+    for (stat_name, &xp_per_unit) in xp_config {
+        sqlx::query(
+            "INSERT INTO event_stats (event_id, stat_name, xp_per_unit)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (event_id, stat_name) DO NOTHING",
+        )
+        .bind(event_id)
+        .bind(stat_name)
+        .bind(xp_per_unit)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+// =========================================================================
+// event_xp
+// =========================================================================
+
+/// Called after every stat delta commit. Looks up all active events for the
+/// guild that track `stat_name`, inserts an `event_xp` row for each, and
+/// returns the total XP earned across all matching events (for the caller to
+/// add to the user's `total_xp` if desired).
+///
+/// Uses `ON CONFLICT (event_id, delta_id) DO NOTHING` to guarantee idempotency.
+pub async fn award_event_xp_for_delta(
+    pool: &PgPool,
+    guild_id: i64,
+    user_id: i64,
+    stat_name: &str,
+    delta_id: i64,
+    difference: f64,
+    now: &DateTime<Utc>,
+) -> Result<f64, sqlx::Error> {
+    debug!(
+        "queries::award_event_xp_for_delta: guild_id={}, user_id={}, stat_name={}, delta_id={}, difference={}",
+        guild_id, user_id, stat_name, delta_id, difference
+    );
+
+    // Find all active events for this guild that include this stat.
+    let stats: Vec<DbEventStat> = sqlx::query_as::<_, DbEventStat>(
+        "SELECT es.*
+         FROM event_stats es
+         JOIN events e ON e.id = es.event_id
+         WHERE e.guild_id = $1
+           AND e.status = 'active'
+           AND es.stat_name = $2",
+    )
+    .bind(guild_id)
+    .bind(stat_name)
+    .fetch_all(pool)
+    .await?;
+
+    if stats.is_empty() {
+        return Ok(0.0);
+    }
+
+    let units = difference.round() as i32;
+    if units <= 0 {
+        return Ok(0.0);
+    }
+
+    let mut total_xp = 0.0_f64;
+
+    for es in &stats {
+        let xp_earned = es.xp_per_unit * (units as f64);
+
+        sqlx::query(
+            "INSERT INTO event_xp
+                 (event_id, user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (event_id, delta_id) DO NOTHING",
+        )
+        .bind(es.event_id)
+        .bind(user_id)
+        .bind(stat_name)
+        .bind(delta_id)
+        .bind(units)
+        .bind(es.xp_per_unit)
+        .bind(xp_earned)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        total_xp += xp_earned;
+    }
+
+    Ok(total_xp)
+}
+
+/// Return the event leaderboard for a given event (top N users by total event XP).
+pub async fn get_event_leaderboard(
+    pool: &PgPool,
+    event_id: i64,
+    limit: i64,
+) -> Result<Vec<EventLeaderboardEntry>, sqlx::Error> {
+    debug!(
+        "queries::get_event_leaderboard: event_id={}, limit={}",
+        event_id, limit
+    );
+    sqlx::query_as::<_, EventLeaderboardEntry>(
+        "SELECT u.discord_user_id,
+                u.minecraft_username,
+                COALESCE(SUM(ex.xp_earned), 0.0) AS total_event_xp
+         FROM event_xp ex
+         JOIN users u ON u.id = ex.user_id
+         WHERE ex.event_id = $1
+         GROUP BY u.discord_user_id, u.minecraft_username
+         ORDER BY total_event_xp DESC
+         LIMIT $2",
+    )
+    .bind(event_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Return a user's total event XP and per-stat breakdown for a given event.
+pub async fn get_user_event_stats(
+    pool: &PgPool,
+    event_id: i64,
+    user_id: i64,
+) -> Result<Vec<(String, f64)>, sqlx::Error> {
+    debug!(
+        "queries::get_user_event_stats: event_id={}, user_id={}",
+        event_id, user_id
+    );
+    let rows = sqlx::query_as::<_, (String, f64)>(
+        "SELECT stat_name, SUM(xp_earned) AS total_xp
+         FROM event_xp
+         WHERE event_id = $1 AND user_id = $2
+         GROUP BY stat_name
+         ORDER BY total_xp DESC",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+// =========================================================================
+// backfill
+// =========================================================================
+
+/// Count the number of `stat_deltas` rows that fall within the event's time
+/// window and match one of its configured stat names. Used to give admins an
+/// estimate before running a manual backfill.
+pub async fn count_deltas_for_event(
+    pool: &PgPool,
+    event_id: i64,
+) -> Result<i64, sqlx::Error> {
+    debug!("queries::count_deltas_for_event: event_id={}", event_id);
+
+    let event: DbEvent = sqlx::query_as::<_, DbEvent>("SELECT * FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(pool)
+        .await?;
+
+    let window_end = event.end_date.min(Utc::now());
+
+    let stat_names: Vec<String> =
+        sqlx::query_as::<_, (String,)>("SELECT stat_name FROM event_stats WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .map(|(s,)| s)
+            .collect();
+
+    if stat_names.is_empty() {
+        return Ok(0);
+    }
+
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM stat_deltas
+         WHERE stat_name = ANY($1)
+           AND created_at >= $2
+           AND created_at <= $3
+           AND delta > 0",
+    )
+    .bind(&stat_names)
+    .bind(event.start_date)
+    .bind(window_end)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.0)
+}
+
+/// Process one batch of `stat_deltas` inside a single transaction.
+///
+/// Returns a map of `user_id → xp_earned` for newly-inserted rows only
+/// (skipping deltas that were already in `event_xp` via `ON CONFLICT DO NOTHING`).
+async fn process_batch(
+    pool: &PgPool,
+    event_id: i64,
+    batch: &[DbStatDelta],
+    stat_map: &HashMap<String, DbEventStat>,
+) -> Result<HashMap<i64, f64>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let mut user_xp: HashMap<i64, f64> = HashMap::new();
+
+    for delta in batch {
+        let es = match stat_map.get(&delta.stat_name) {
+            Some(s) => s,
+            None => continue,
+        };
+
+        let units = delta.delta.round() as i32;
+        if units <= 0 {
+            continue;
+        }
+
+        let xp_earned = es.xp_per_unit * units as f64;
+
+        let row: Option<(f64,)> = sqlx::query_as(
+            "INSERT INTO event_xp
+                 (event_id, user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+             ON CONFLICT (event_id, delta_id) DO NOTHING
+             RETURNING xp_earned",
+        )
+        .bind(event_id)
+        .bind(delta.user_id)
+        .bind(&delta.stat_name)
+        .bind(delta.id)
+        .bind(units)
+        .bind(es.xp_per_unit)
+        .bind(xp_earned)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some((actual_xp,)) = row {
+            *user_xp.entry(delta.user_id).or_insert(0.0) += actual_xp;
+        }
+    }
+
+    tx.commit().await?;
+    Ok(user_xp)
+}
+
+/// Run `process_batch` with up to `max_retries` attempts, using exponential
+/// back-off of 100 ms × attempt number between retries.
+async fn process_batch_with_retry(
+    pool: &PgPool,
+    event_id: i64,
+    batch: &[DbStatDelta],
+    stat_map: &HashMap<String, DbEventStat>,
+    max_retries: u32,
+) -> Result<HashMap<i64, f64>, sqlx::Error> {
+    let mut last_err: Option<sqlx::Error> = None;
+
+    for attempt in 1..=max_retries {
+        match process_batch(pool, event_id, batch, stat_map).await {
+            Ok(map) => return Ok(map),
+            Err(e) => {
+                warn!(
+                    event_id,
+                    attempt,
+                    error = %e,
+                    "Backfill batch failed, will retry."
+                );
+                last_err = Some(e);
+                tokio::time::sleep(std::time::Duration::from_millis(100 * attempt as u64)).await;
+            }
+        }
+    }
+
+    Err(last_err.unwrap())
+}
+
+/// Retroactively award event XP for all `stat_deltas` rows that fall within
+/// the event's time window and match one of its configured stat names.
+///
+/// Uses cursor-based pagination (500 rows per batch) so it is safe to run
+/// against large delta tables without OFFSET skew. Each batch is committed in
+/// its own transaction and `ON CONFLICT … DO NOTHING` makes the whole job
+/// idempotent — safe to re-run after a crash or via `/edit-events backfill`.
+///
+/// After all batches finish, `total_xp` is incremented once per affected user
+/// and their level is recalculated once.
+pub async fn backfill_event_xp(
+    pool: &PgPool,
+    event_id: i64,
+    base_level_xp: f64,
+    level_exponent: f64,
+) -> Result<BackfillSummary, sqlx::Error> {
+    use crate::xp::calculator::calculate_level;
+
+    info!(event_id, "Starting backfill.");
+
+    // Load event.
+    let event: DbEvent = sqlx::query_as::<_, DbEvent>("SELECT * FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(pool)
+        .await?;
+
+    let window_start = event.start_date;
+    let window_end = event.end_date.min(Utc::now());
+
+    // Load event stats into a map keyed by stat_name.
+    let stats: Vec<DbEventStat> =
+        sqlx::query_as::<_, DbEventStat>("SELECT * FROM event_stats WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_all(pool)
+            .await?;
+
+    if stats.is_empty() {
+        info!(event_id, "No event stats configured; skipping backfill.");
+        return Ok(BackfillSummary::default());
+    }
+
+    let stat_map: HashMap<String, DbEventStat> = stats
+        .into_iter()
+        .map(|s| (s.stat_name.clone(), s))
+        .collect();
+
+    let stat_names: Vec<String> = stat_map.keys().cloned().collect();
+
+    // Cursor-based batch loop.
+    let mut cursor_id: i64 = 0;
+    let mut batch_num: i64 = 0;
+    let mut total_deltas: i64 = 0;
+    let mut user_xp_map: HashMap<i64, f64> = HashMap::new();
+
+    loop {
+        let batch: Vec<DbStatDelta> = sqlx::query_as::<_, DbStatDelta>(
+            "SELECT * FROM stat_deltas
+             WHERE stat_name = ANY($1)
+               AND created_at >= $2
+               AND created_at <= $3
+               AND delta > 0
+               AND id > $4
+             ORDER BY id ASC
+             LIMIT 500",
+        )
+        .bind(&stat_names)
+        .bind(window_start)
+        .bind(window_end)
+        .bind(cursor_id)
+        .fetch_all(pool)
+        .await?;
+
+        if batch.is_empty() {
+            break;
+        }
+
+        let batch_len = batch.len() as i64;
+        cursor_id = batch.last().unwrap().id;
+
+        let batch_xp = process_batch_with_retry(pool, event_id, &batch, &stat_map, 3).await?;
+
+        // Increment XP per-batch for crash safety, and accumulate running totals.
+        let now = Utc::now();
+        for (&uid, &xp) in &batch_xp {
+            if xp > 0.0 {
+                if let Err(e) = increment_xp(pool, uid, xp, &now).await {
+                    error!(event_id, user_id = uid, error = %e, "Failed to increment XP during backfill batch.");
+                }
+                *user_xp_map.entry(uid).or_insert(0.0) += xp;
+            }
+        }
+
+        batch_num += 1;
+        total_deltas += batch_len;
+
+        if batch_num % 10 == 0 {
+            info!(
+                event_id,
+                batch_num,
+                total_deltas_processed = total_deltas,
+                "Backfill progress."
+            );
+        }
+
+        if batch_len < 500 {
+            break;
+        }
+    }
+
+    // Recalculate levels once per affected user (after all XP has been incremented).
+    let now = Utc::now();
+    let mut total_xp_awarded = 0.0_f64;
+    let users_affected = user_xp_map.len() as i64;
+
+    for (&uid, &xp) in &user_xp_map {
+        total_xp_awarded += xp;
+        match get_xp(pool, uid).await {
+            Ok(Some(xp_row)) => {
+                let new_level = calculate_level(xp_row.total_xp, base_level_xp, level_exponent);
+                if new_level != xp_row.level {
+                    if let Err(e) = update_level(pool, uid, new_level, &now).await {
+                        error!(event_id, user_id = uid, error = %e, "Failed to update level during backfill.");
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                error!(event_id, user_id = uid, error = %e, "Failed to fetch XP row during level recalc.");
+            }
+        }
+    }
+
+    let summary = BackfillSummary {
+        deltas_processed: total_deltas,
+        total_xp_awarded,
+        users_affected,
+    };
+
+    info!(
+        event_id,
+        total_deltas_processed = summary.deltas_processed,
+        total_xp = summary.total_xp_awarded,
+        users_affected = summary.users_affected,
+        "Backfill completed."
+    );
+
+    Ok(summary)
 }

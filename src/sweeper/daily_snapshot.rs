@@ -62,6 +62,21 @@ pub async fn start_daily_snapshot_loop(data: Arc<Data>) {
                     ),
                 )
                 .await;
+
+                // Transition events between pending/active/ended now that a new
+                // snapshot is available for accurate start_snapshot_date resolution.
+                if let Err(e) = queries::update_event_statuses(&data.db).await {
+                    error!(error = %e, "Failed to update event statuses after daily snapshot.");
+                    broadcast_log(
+                        &data,
+                        LogType::Warn,
+                        format!(
+                            "Daily snapshot succeeded but failed to update event statuses: {}",
+                            e
+                        ),
+                    )
+                    .await;
+                }
             }
         }
     }

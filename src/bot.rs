@@ -3,6 +3,7 @@
 /// Configures and builds the Poise framework, registers commands, sets up
 /// Discord gateway intents, wires the event handler for Discord stats
 /// tracking, and starts the background stat sweeper and leaderboard updater.
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use poise::serenity_prelude as serenity;
@@ -83,6 +84,7 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
                     config: config.clone(),
                     leaderboard_cache,
                     message_validation: MessageValidationState::default(),
+                    voice_sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
                     http: ctx.http.clone(),
                 };
 
@@ -159,10 +161,12 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
 /// - `GUILDS` — for guild/role lookups.
 /// - `GUILD_MESSAGES` — to track message activity.
 /// - `GUILD_MESSAGE_REACTIONS` — to track reaction activity.
+/// - `GUILD_VOICE_STATES` — to track voice channel join/leave for voice_minutes.
 /// - `MESSAGE_CONTENT` — required to read message content (privileged intent).
 pub fn intents() -> serenity::GatewayIntents {
     serenity::GatewayIntents::GUILDS
         | serenity::GatewayIntents::GUILD_MESSAGES
         | serenity::GatewayIntents::GUILD_MESSAGE_REACTIONS
+        | serenity::GatewayIntents::GUILD_VOICE_STATES
         | serenity::GatewayIntents::MESSAGE_CONTENT
 }

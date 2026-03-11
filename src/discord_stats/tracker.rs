@@ -30,12 +30,13 @@ pub async fn handle_event(event: &FullEvent, data: &Data) -> Result<(), Error> {
                 return Ok(());
             }
 
-            increment_stat(
+            increment_stat_by(
                 &data.db,
                 data,
                 new_message.author.id.get() as i64,
                 guild_id.get() as i64,
                 "messages_sent",
+                1.0,
             )
             .await;
         }
@@ -49,14 +50,19 @@ pub async fn handle_event(event: &FullEvent, data: &Data) -> Result<(), Error> {
                 return Ok(());
             };
 
-            increment_stat(
+            increment_stat_by(
                 &data.db,
                 data,
                 user_id.get() as i64,
                 guild_id.get() as i64,
                 "reactions_added",
+                1.0,
             )
             .await;
+        }
+
+        FullEvent::VoiceStateUpdate { old, new } => {
+            handle_voice_state_update(data, old.as_ref(), new).await;
         }
 
         _ => {}
@@ -65,19 +71,96 @@ pub async fn handle_event(event: &FullEvent, data: &Data) -> Result<(), Error> {
     Ok(())
 }
 
-/// Record command usage (called from command hook)
-pub async fn record_command_usage(pool: &PgPool, data: &Data, discord_user_id: i64, guild_id: i64) {
-    increment_stat(pool, data, discord_user_id, guild_id, "commands_used").await;
+/// Handle a voice state transition and record voice_minutes when a user leaves.
+async fn handle_voice_state_update(
+    data: &Data,
+    old: Option<&serenity::all::VoiceState>,
+    new: &serenity::all::VoiceState,
+) {
+    // Ignore bots — serenity doesn't expose `member.user.bot` directly on
+    // VoiceState, but guild_id lets us gate on guild context at least.
+    let Some(guild_id) = new.guild_id else {
+        return;
+    };
+
+    let discord_user_id = new.user_id.get() as i64;
+
+    let was_in_voice = old.as_ref().and_then(|v| v.channel_id).is_some();
+    let is_in_voice = new.channel_id.is_some();
+
+    match (was_in_voice, is_in_voice) {
+        // User joined a voice channel — record start time.
+        (false, true) => {
+            let mut sessions = data.voice_sessions.lock().unwrap();
+            sessions.insert(discord_user_id, Utc::now());
+            debug!(discord_user_id, "Voice session started.");
+        }
+
+        // User left all voice channels — compute duration and record minutes.
+        (true, false) => {
+            let join_time = {
+                let mut sessions = data.voice_sessions.lock().unwrap();
+                sessions.remove(&discord_user_id)
+            };
+
+            let Some(join_time) = join_time else {
+                // Session started before bot was running; nothing to record.
+                return;
+            };
+
+            let duration = Utc::now().signed_duration_since(join_time);
+            let minutes = duration.num_minutes();
+
+            if minutes < 1 {
+                debug!(
+                    discord_user_id,
+                    minutes, "Voice session too short — skipped."
+                );
+                return;
+            }
+
+            debug!(
+                discord_user_id,
+                minutes, "Voice session ended — recording minutes."
+            );
+
+            increment_stat_by(
+                &data.db,
+                data,
+                discord_user_id,
+                guild_id.get() as i64,
+                "voice_minutes",
+                minutes as f64,
+            )
+            .await;
+        }
+
+        // User moved between channels — keep the existing session going.
+        (true, true) => {}
+
+        // Already not in voice; no-op.
+        (false, false) => {}
+    }
 }
 
-/// Increment a stat and immediately apply XP.
-async fn increment_stat(
+/// Record command usage (called from command hook)
+pub async fn record_command_usage(pool: &PgPool, data: &Data, discord_user_id: i64, guild_id: i64) {
+    increment_stat_by(pool, data, discord_user_id, guild_id, "commands_used", 1.0).await;
+}
+
+/// Increment a Discord stat by `by` units and immediately apply XP + event XP.
+async fn increment_stat_by(
     pool: &PgPool,
     data: &Data,
     discord_user_id: i64,
     guild_id: i64,
     stat_name: &str,
+    by: f64,
 ) {
+    if by <= 0.0 {
+        return;
+    }
+
     let now = Utc::now();
 
     // ----------------------------------------------------
@@ -110,7 +193,7 @@ async fn increment_stat(
         }
     };
 
-    let new_value = current + 1.0;
+    let new_value = current + by;
 
     // ----------------------------------------------------
     // Insert snapshot (pool-only query — must happen before transaction
@@ -129,8 +212,6 @@ async fn increment_stat(
     // ----------------------------------------------------
     let delta = StatDelta::new(user.id, stat_name.to_string(), current, new_value);
 
-    // Guard: only proceed if the difference is positive (it always is here,
-    // but be explicit for safety and documentation purposes)
     if delta.difference <= 0.0 {
         return;
     }
@@ -220,17 +301,48 @@ async fn increment_stat(
     }
 
     // ----------------------------------------------------
-    // Apply XP to user (pool-only query — runs after transaction commit)
+    // Award event XP for this delta (post-commit, pool-only)
+    // ----------------------------------------------------
+    let event_xp = match queries::award_event_xp_for_delta(
+        pool,
+        guild_id,
+        user.id,
+        stat_name,
+        delta_id,
+        delta.difference,
+        &now,
+    )
+    .await
+    {
+        Ok(xp) => xp,
+        Err(e) => {
+            error!(error = %e, "failed to award event XP");
+            0.0
+        }
+    };
+
+    // ----------------------------------------------------
+    // Apply regular XP to user (pool-only query — runs after transaction commit)
     // ----------------------------------------------------
     if total_xp > 0.0 {
         if let Err(e) = queries::increment_xp(pool, user.id, total_xp, &now).await {
             error!(error = %e, "failed incrementing xp");
             return;
         }
+    }
 
-        // ----------------------------------------------------
-        // Fetch updated XP total and recalculate level
-        // ----------------------------------------------------
+    // If event XP was also earned we need an additional increment (events
+    // contribute to the user's global total_xp per spec).
+    if event_xp > 0.0 {
+        if let Err(e) = queries::increment_xp(pool, user.id, event_xp, &now).await {
+            error!(error = %e, "failed incrementing event xp");
+        }
+    }
+
+    // ----------------------------------------------------
+    // Fetch updated XP total and recalculate level (only if any XP changed)
+    // ----------------------------------------------------
+    if total_xp > 0.0 || event_xp > 0.0 {
         let xp_row = match queries::get_xp(pool, user.id).await {
             Ok(Some(x)) => x,
             Ok(None) => {
@@ -249,7 +361,6 @@ async fn increment_stat(
             data.config.level_exponent,
         );
 
-        // Only write to DB when the level has actually changed
         if new_level != xp_row.level {
             if let Err(e) = queries::update_level(pool, user.id, new_level, &now).await {
                 error!(error = %e, "failed updating level");
@@ -263,6 +374,7 @@ async fn increment_stat(
         stat_name,
         new_value,
         xp_awarded = total_xp,
+        event_xp_awarded = event_xp,
         "Discord stat processed"
     );
 }

@@ -142,10 +142,19 @@ pub const DISCORD_STATS: &[DiscordStat] = &[
         display: "Commands Used",
         value: "commands_used",
     },
+    DiscordStat {
+        display: "Voice Minutes",
+        value: "voice_minutes",
+    },
 ];
 
 /// Flat slice of Discord stat key strings for quick membership checks.
-pub const DISCORD_STAT_KEYS: &[&str] = &["messages_sent", "reactions_added", "commands_used"];
+pub const DISCORD_STAT_KEYS: &[&str] = &[
+    "messages_sent",
+    "reactions_added",
+    "commands_used",
+    "voice_minutes",
+];
 
 /// Return a human-friendly display label for a raw stat key.
 ///
