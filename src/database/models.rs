@@ -373,6 +373,21 @@ pub struct DbPersistentEventLeaderboard {
 }
 
 // ---------------------------------------------------------------------------
+// event_status_messages
+// ---------------------------------------------------------------------------
+
+/// A row from the `event_status_messages` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbEventStatusMessage {
+    pub id: i64,
+    pub event_id: i64,
+    pub channel_id: i64,
+    pub message_id: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // Voice session state
 // ---------------------------------------------------------------------------
 

@@ -13,10 +13,10 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::models::{
-    BackfillSummary, DbDailySnapshot, DbEvent, DbEventStat, DbGuild, DbMilestone,
-    DbPersistentEventLeaderboard, DbPersistentLeaderboard, DbStatDelta, DbStatsSnapshot,
-    DbSweepCursor, DbUser, DbXP, EventLeaderboardEntry, EventParticipant, LeaderboardEntry,
-    MilestoneWithCount,
+    BackfillSummary, DbDailySnapshot, DbEvent, DbEventStat, DbEventStatusMessage, DbGuild,
+    DbMilestone, DbPersistentEventLeaderboard, DbPersistentLeaderboard, DbStatDelta,
+    DbStatsSnapshot, DbSweepCursor, DbUser, DbXP, EventLeaderboardEntry, EventParticipant,
+    LeaderboardEntry, MilestoneWithCount,
 };
 
 // =========================================================================
@@ -2021,6 +2021,79 @@ pub async fn delete_persistent_event_leaderboard(
         event_id
     );
     sqlx::query("DELETE FROM persistent_event_leaderboards WHERE event_id = $1")
+        .bind(event_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// =========================================================================
+// event_status_messages
+// =========================================================================
+
+/// Insert or update an event status message entry.
+pub async fn upsert_event_status_message(
+    pool: &PgPool,
+    event_id: i64,
+    channel_id: i64,
+    message_id: i64,
+    created_at: &DateTime<Utc>,
+    updated_at: &DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    debug!(
+        "queries::upsert_event_status_message: event_id={}, channel_id={}, message_id={}",
+        event_id, channel_id, message_id
+    );
+    sqlx::query(
+        "INSERT INTO event_status_messages
+         (event_id, channel_id, message_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT(event_id) DO UPDATE SET
+             channel_id = excluded.channel_id,
+             message_id = excluded.message_id,
+             updated_at = excluded.updated_at",
+    )
+    .bind(event_id)
+    .bind(channel_id)
+    .bind(message_id)
+    .bind(created_at)
+    .bind(updated_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Retrieve the event status message row for an event, if one exists.
+pub async fn get_event_status_message(
+    pool: &PgPool,
+    event_id: i64,
+) -> Result<Option<DbEventStatusMessage>, sqlx::Error> {
+    debug!("queries::get_event_status_message: event_id={}", event_id);
+    sqlx::query_as::<_, DbEventStatusMessage>(
+        "SELECT * FROM event_status_messages WHERE event_id = $1",
+    )
+    .bind(event_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get all event status message rows (used by the updater background task).
+pub async fn get_all_event_status_messages(
+    pool: &PgPool,
+) -> Result<Vec<DbEventStatusMessage>, sqlx::Error> {
+    debug!("queries::get_all_event_status_messages");
+    sqlx::query_as::<_, DbEventStatusMessage>("SELECT * FROM event_status_messages")
+        .fetch_all(pool)
+        .await
+}
+
+/// Delete the event status message row for an event.
+pub async fn delete_event_status_message(pool: &PgPool, event_id: i64) -> Result<(), sqlx::Error> {
+    debug!(
+        "queries::delete_event_status_message: event_id={}",
+        event_id
+    );
+    sqlx::query("DELETE FROM event_status_messages WHERE event_id = $1")
         .bind(event_id)
         .execute(pool)
         .await?;

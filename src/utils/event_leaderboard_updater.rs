@@ -1,7 +1,8 @@
-/// Persistent event leaderboard background updater.
+/// Persistent event leaderboard and status message background updater.
 ///
 /// Runs on a timer (matching the leaderboard cache interval) and edits all
-/// persistent event leaderboard messages with fresh images.
+/// persistent event leaderboard messages with fresh images, and updates event
+/// status messages with current information.
 ///
 /// The updater stops refreshing an event's leaderboard once the event has
 /// ended and the final frozen standings have been captured — it does one last
@@ -9,18 +10,19 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use poise::serenity_prelude::{self as serenity, CreateAttachment, EditMessage};
+use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateEmbed, EditMessage};
 use sqlx::PgPool;
 use tracing::{error, info, warn};
 
 use crate::commands::leaderboard::helpers;
 use crate::database::queries;
+use crate::utils::stats_definitions::display_name_for_key;
 
-/// Spawn the persistent event leaderboard updater as a background tokio task.
+/// Spawn the persistent event leaderboard and status updater as a background tokio task.
 ///
 /// `http` is the Serenity HTTP client for editing Discord messages.
 /// `interval_secs` is how often (in seconds) to refresh all persistent event
-/// leaderboards — should match `leaderboard_cache_seconds`.
+/// leaderboards and status messages — should match `leaderboard_cache_seconds`.
 pub fn start_event_leaderboard_updater(
     pool: PgPool,
     http: Arc<serenity::Http>,
@@ -31,7 +33,7 @@ pub fn start_event_leaderboard_updater(
     tokio::spawn(async move {
         info!(
             interval_secs,
-            "Persistent event leaderboard updater started."
+            "Persistent event leaderboard and status updater started."
         );
 
         loop {
@@ -39,6 +41,10 @@ pub fn start_event_leaderboard_updater(
 
             if let Err(e) = update_all_event_leaderboards(&pool, &http).await {
                 error!(error = %e, "Event leaderboard updater: iteration failed.");
+            }
+
+            if let Err(e) = update_all_event_status_messages(&pool, &http).await {
+                error!(error = %e, "Event status updater: iteration failed.");
             }
         }
     });
@@ -66,6 +72,35 @@ async fn update_all_event_leaderboards(
                 event_id = lb.event_id,
                 error = %e,
                 "Event leaderboard updater: failed to update event leaderboard, skipping."
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Update all persistent event status messages.
+async fn update_all_event_status_messages(
+    pool: &PgPool,
+    http: &Arc<serenity::Http>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let status_messages = queries::get_all_event_status_messages(pool).await?;
+
+    if status_messages.is_empty() {
+        return Ok(());
+    }
+
+    info!(
+        "Event status updater: updating {} persistent event status message(s)...",
+        status_messages.len()
+    );
+
+    for sm in &status_messages {
+        if let Err(e) = update_single_event_status_message(pool, http, sm).await {
+            warn!(
+                event_id = sm.event_id,
+                error = %e,
+                "Event status updater: failed to update event status message, skipping."
             );
         }
     }
@@ -213,4 +248,139 @@ async fn update_single_event_leaderboard(
     }
 
     Ok(())
+}
+
+/// Update a single event's persistent status message.
+async fn update_single_event_status_message(
+    pool: &PgPool,
+    http: &Arc<serenity::Http>,
+    record: &crate::database::models::DbEventStatusMessage,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Load the event to know its status, name, and dates.
+    let event = match queries::get_event_by_id(pool, record.event_id).await? {
+        Some(e) => e,
+        None => {
+            warn!(
+                event_id = record.event_id,
+                "Event status updater: event not found, skipping."
+            );
+            return Ok(());
+        }
+    };
+
+    let channel = serenity::ChannelId::new(record.channel_id as u64);
+
+    // Generate the status embed
+    let embed = generate_event_status_embed(pool, &event).await?;
+
+    let edit = EditMessage::new().embed(embed);
+
+    if let Err(e) = channel
+        .edit_message(
+            http,
+            serenity::MessageId::new(record.message_id as u64),
+            edit,
+        )
+        .await
+    {
+        warn!(
+            event_id = record.event_id,
+            message_id = record.message_id,
+            error = %e,
+            "Event status updater: failed to update status message."
+        );
+    } else {
+        // Update the updated_at timestamp
+        let now = chrono::Utc::now();
+        queries::upsert_event_status_message(
+            pool,
+            record.event_id,
+            record.channel_id,
+            record.message_id,
+            &record.created_at,
+            &now,
+        )
+        .await?;
+    }
+
+    info!(
+        event_id = record.event_id,
+        "Event status updater: updated event status message."
+    );
+
+    Ok(())
+}
+
+/// Generate an embed showing the current status of an event.
+async fn generate_event_status_embed(
+    pool: &PgPool,
+    event: &crate::database::models::DbEvent,
+) -> Result<CreateEmbed, Box<dyn std::error::Error + Send + Sync>> {
+    let now = chrono::Utc::now();
+    let mut embed = CreateEmbed::new().title(&event.name).color(0x00BFFF);
+
+    match event.status.as_str() {
+        "pending" => {
+            embed = embed.field("Status", "Pending", true);
+            if event.start_date > now {
+                let countdown = event.start_date.signed_duration_since(now);
+                let days = countdown.num_days();
+                let hours = countdown.num_hours() % 24;
+                let mins = countdown.num_minutes() % 60;
+                embed = embed.field("Starts In", format!("{}d {}h {}m", days, hours, mins), true);
+            }
+            embed = embed.field(
+                "Starts",
+                format!("<t:{}:F>", event.start_date.timestamp()),
+                false,
+            );
+        }
+        "active" => {
+            embed = embed.field("Status", "Active", true);
+            let participants = queries::count_event_participants(pool, event.id).await?;
+            embed = embed.field("Participants", participants.to_string(), true);
+            if event.end_date > now {
+                let countdown = event.end_date.signed_duration_since(now);
+                let days = countdown.num_days();
+                let hours = countdown.num_hours() % 24;
+                let mins = countdown.num_minutes() % 60;
+                embed = embed.field("Ends In", format!("{}d {}h {}m", days, hours, mins), true);
+            }
+            embed = embed.field(
+                "Ends",
+                format!("<t:{}:F>", event.end_date.timestamp()),
+                false,
+            );
+        }
+        "ended" => {
+            embed = embed.field("Status", "Ended", true);
+            let participants = queries::count_event_participants(pool, event.id).await?;
+            embed = embed.field("Participants", participants.to_string(), true);
+            let duration = event.end_date.signed_duration_since(event.start_date);
+            let days = duration.num_days();
+            embed = embed.field("Duration", format!("{} days", days), true);
+            embed = embed.footer(serenity::CreateEmbedFooter::new(
+                "View results with /event leaderboard",
+            ));
+        }
+        _ => {}
+    }
+
+    // Show stats for pending and active events
+    if event.status == "pending" || event.status == "active" {
+        let stats = queries::get_event_stats(pool, event.id).await?;
+        if !stats.is_empty() {
+            let mut stats_desc = String::new();
+            for stat in stats {
+                let display_name = display_name_for_key(&stat.stat_name);
+                stats_desc.push_str(&format!(
+                    "• {} — +{} XP\n",
+                    display_name, stat.xp_per_unit as i32
+                ));
+            }
+            embed = embed.field("Stats Enabled", stats_desc, false);
+        }
+    }
+
+    Ok(embed)
 }

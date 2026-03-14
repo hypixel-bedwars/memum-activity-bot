@@ -8,18 +8,25 @@
 /// - `end`                 — force end an active event
 /// - `participants`        — list event participants with pagination
 /// - `leaderboard persist` — send a persistent leaderboard message
+/// - `status create`       — create a persistent status message
+/// - `status remove`       — remove the persistent status message
 /// - `stats-add`           — add a stat to an event
 /// - `stats-remove`        — remove a stat from an event
 /// - `stats-edit`          — edit XP per unit for a stat
 /// - `list`                — list all events
+/// - `backfill`            — backfill XP for an event
 ///
 /// All subcommands are ephemeral and require the admin check.
-use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateEmbed, CreateMessage};
+use poise::serenity_prelude::{
+    self as serenity, CreateAttachment, CreateEmbed, CreateEmbedFooter, CreateMessage,
+};
+use sqlx::PgPool;
 use tracing::{error, info};
 
 use crate::commands::leaderboard::helpers as lb_helpers;
 use crate::commands::logger::logger::{LogType, logger, logger_system};
 use crate::config::GuildConfig;
+use crate::database::models::DbEvent;
 use crate::database::queries;
 use crate::shared::types::{Context, Error};
 use crate::utils::stats_definitions::display_name_for_key;
@@ -139,7 +146,8 @@ async fn autocomplete_event_stat<'a>(
         "stats_remove",
         "stats_edit",
         "list",
-        "backfill"
+        "backfill",
+        "status"
     )
 )]
 pub async fn edit_event(_ctx: Context<'_>) -> Result<(), Error> {
@@ -1083,6 +1091,264 @@ pub async fn persist(
             event.name,
             channel.get(),
             total_pages
+        ),
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Generate an embed showing the current status of an event.
+async fn generate_event_status_embed(pool: &PgPool, event: &DbEvent) -> Result<CreateEmbed, Error> {
+    let now = chrono::Utc::now();
+    let mut embed = CreateEmbed::new().title(&event.name).color(0x00BFFF);
+
+    match event.status.as_str() {
+        "pending" => {
+            embed = embed.field("Status", "Pending", true);
+            if event.start_date > now {
+                let countdown = event.start_date.signed_duration_since(now);
+                let days = countdown.num_days();
+                let hours = countdown.num_hours() % 24;
+                let mins = countdown.num_minutes() % 60;
+                embed = embed.field("Starts In", format!("{}d {}h {}m", days, hours, mins), true);
+            }
+            embed = embed.field(
+                "Starts",
+                format!("<t:{}:F>", event.start_date.timestamp()),
+                false,
+            );
+        }
+        "active" => {
+            embed = embed.field("Status", "Active", true);
+            let participants = queries::count_event_participants(pool, event.id).await?;
+            embed = embed.field("Participants", participants.to_string(), true);
+            if event.end_date > now {
+                let countdown = event.end_date.signed_duration_since(now);
+                let days = countdown.num_days();
+                let hours = countdown.num_hours() % 24;
+                let mins = countdown.num_minutes() % 60;
+                embed = embed.field("Ends In", format!("{}d {}h {}m", days, hours, mins), true);
+            }
+            embed = embed.field(
+                "Ends",
+                format!("<t:{}:F>", event.end_date.timestamp()),
+                false,
+            );
+        }
+        "ended" => {
+            embed = embed.field("Status", "Ended", true);
+            let participants = queries::count_event_participants(pool, event.id).await?;
+            embed = embed.field("Participants", participants.to_string(), true);
+            let duration = event.end_date.signed_duration_since(event.start_date);
+            let days = duration.num_days();
+            embed = embed.field("Duration", format!("{} days", days), true);
+            embed = embed.footer(CreateEmbedFooter::new(
+                "View results with /event leaderboard",
+            ));
+        }
+        _ => {}
+    }
+
+    // Show stats for pending and active events
+    if event.status == "pending" || event.status == "active" {
+        let stats = queries::get_event_stats(pool, event.id).await?;
+        if !stats.is_empty() {
+            let mut stats_desc = String::new();
+            for stat in stats {
+                let display_name = display_name_for_key(&stat.stat_name);
+                stats_desc.push_str(&format!(
+                    "• {} — +{} XP\n",
+                    display_name, stat.xp_per_unit as i32
+                ));
+            }
+            embed = embed.field("Stats Enabled", stats_desc, false);
+        }
+    }
+
+    Ok(embed)
+}
+
+#[poise::command(slash_command, subcommands("create", "remove"))]
+pub async fn status(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::utils::permissions::admin_check"
+)]
+pub async fn create(
+    ctx: Context<'_>,
+    #[description = "Select the event to send the status for (defaults to latest event)"]
+    #[autocomplete = "autocomplete_event_name"]
+    event_name: Option<String>,
+    #[description = "Channel to post the status message in"] channel: serenity::ChannelId,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
+    let guild_id = ctx
+        .guild_id()
+        .ok_or("This command can only be used in a server.")?;
+    let guild_id_i64 = guild_id.get() as i64;
+
+    // Resolve event — use provided name or fall back to the latest event.
+    let resolved_name = match event_name {
+        Some(n) => n,
+        None => queries::get_latest_event_name(&ctx.data().db, guild_id_i64)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No event currently scheduled."))?,
+    };
+
+    let event = queries::get_event_by_name(&ctx.data().db, guild_id_i64, &resolved_name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Event **{}** not found.", resolved_name))?;
+
+    // If there's already a status message for this event, delete the old one.
+    if let Some(existing) = queries::get_event_status_message(&ctx.data().db, event.id).await? {
+        let old_channel = serenity::ChannelId::new(existing.channel_id as u64);
+        let _ = old_channel
+            .delete_message(
+                &ctx.http(),
+                serenity::MessageId::new(existing.message_id as u64),
+            )
+            .await;
+        queries::delete_event_status_message(&ctx.data().db, event.id).await?;
+    }
+
+    // Generate the status embed
+    let embed = generate_event_status_embed(&ctx.data().db, &event).await?;
+
+    // Send the message
+    let msg = channel
+        .send_message(&ctx.http(), CreateMessage::new().embed(embed))
+        .await?;
+
+    let message_id = msg.id.get() as i64;
+
+    // Store in database
+    let now = chrono::Utc::now();
+    queries::upsert_event_status_message(
+        &ctx.data().db,
+        event.id,
+        channel.get() as i64,
+        message_id,
+        &now,
+        &now,
+    )
+    .await?;
+
+    // Confirmation
+    ctx.send(
+        poise::CreateReply::default().ephemeral(true).embed(
+            CreateEmbed::new()
+                .title("Event Status Message Created")
+                .color(0x00BFFF)
+                .field("Event", &event.name, true)
+                .field("Channel", format!("<#{}>", channel.get()), true)
+                .field("Status", "Auto-updates periodically", false),
+        ),
+    )
+    .await?;
+
+    info!(
+        event_id = event.id,
+        guild_id = guild_id_i64,
+        channel_id = channel.get(),
+        "Created persistent event status message."
+    );
+
+    logger(
+        ctx.serenity_context(),
+        ctx.data(),
+        guild_id,
+        LogType::Info,
+        format!(
+            "{} created a persistent event status message for **{}** in <#{}>",
+            ctx.author().name,
+            event.name,
+            channel.get()
+        ),
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::utils::permissions::admin_check"
+)]
+pub async fn remove(
+    ctx: Context<'_>,
+    #[description = "Select the event whose status message should be removed (defaults to latest event)"]
+    #[autocomplete = "autocomplete_event_name"]
+    event_name: Option<String>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
+    let guild_id = ctx
+        .guild_id()
+        .ok_or("This command can only be used in a server.")?;
+    let guild_id_i64 = guild_id.get() as i64;
+
+    // Resolve event — use provided name or fall back to the latest event.
+    let resolved_name = match event_name {
+        Some(n) => n,
+        None => queries::get_latest_event_name(&ctx.data().db, guild_id_i64)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No event currently scheduled."))?,
+    };
+
+    let event = queries::get_event_by_name(&ctx.data().db, guild_id_i64, &resolved_name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Event **{}** not found.", resolved_name))?;
+
+    // Fetch the stored status message information
+    if let Some(existing) = queries::get_event_status_message(&ctx.data().db, event.id).await? {
+        // Attempt to delete the message from Discord
+        let old_channel = serenity::ChannelId::new(existing.channel_id as u64);
+        let _ = old_channel
+            .delete_message(
+                &ctx.http(),
+                serenity::MessageId::new(existing.message_id as u64),
+            )
+            .await; // Ignore errors if message already deleted or no permission
+
+        // Remove the stored record from the database
+        queries::delete_event_status_message(&ctx.data().db, event.id).await?;
+    }
+
+    // Confirmation
+    ctx.send(
+        poise::CreateReply::default().ephemeral(true).embed(
+            CreateEmbed::new()
+                .title("Event Status Message Removed")
+                .color(0x00BFFF)
+                .field("Event", &event.name, true),
+        ),
+    )
+    .await?;
+
+    info!(
+        event_id = event.id,
+        guild_id = guild_id_i64,
+        "Removed persistent event status message."
+    );
+
+    logger(
+        ctx.serenity_context(),
+        ctx.data(),
+        guild_id,
+        LogType::Info,
+        format!(
+            "{} removed the persistent event status message for **{}**",
+            ctx.author().name,
+            event.name
         ),
     )
     .await?;
