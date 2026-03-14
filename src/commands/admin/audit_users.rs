@@ -16,8 +16,7 @@ use crate::shared::types::{Context, Error};
 )]
 pub async fn audit_users(
     ctx: Context<'_>,
-    #[description = "Automatically fix mismatches (mark active/inactive)"]
-    fix: Option<bool>,
+    #[description = "Automatically fix mismatches (mark active/inactive)"] fix: Option<bool>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
 
@@ -104,21 +103,56 @@ pub async fn audit_users(
 
     // Build a concise report for the admin (include a few example IDs)
     let mut description = String::new();
-    description.push_str(&format!("Total registered users scanned: {}\n\n", present_and_active + present_but_inactive + absent_but_active + absent_and_inactive));
+    description.push_str(&format!(
+        "Total registered users scanned: {}\n\n",
+        present_and_active + present_but_inactive + absent_but_active + absent_and_inactive
+    ));
     description.push_str(&format!("Present & Active: {}\n", present_and_active));
-    description.push_str(&format!("Present but marked inactive: {}{}\n", present_but_inactive, if do_fix { format!(" ({} reactivated)", reactivated) } else { "".to_string() }));
-    description.push_str(&format!("Absent but still active: {}{}\n", absent_but_active, if do_fix { format!(" ({} deactivated)", deactivated) } else { "".to_string() }));
+    description.push_str(&format!(
+        "Present but marked inactive: {}{}\n",
+        present_but_inactive,
+        if do_fix {
+            format!(" ({} reactivated)", reactivated)
+        } else {
+            "".to_string()
+        }
+    ));
+    description.push_str(&format!(
+        "Absent but still active: {}{}\n",
+        absent_but_active,
+        if do_fix {
+            format!(" ({} deactivated)", deactivated)
+        } else {
+            "".to_string()
+        }
+    ));
     description.push_str(&format!("Absent & inactive: {}\n\n", absent_and_inactive));
 
     // Add short example lists (up to 10) for quick inspection
     let examples_show = 10usize;
     if !to_reactivate.is_empty() {
-        let sample: Vec<String> = to_reactivate.iter().take(examples_show).map(|id| format!("<@{}>", id)).collect();
-        description.push_str(&format!("Example users to reactivate ({}): {}\n", to_reactivate.len(), sample.join(", ")));
+        let sample: Vec<String> = to_reactivate
+            .iter()
+            .take(examples_show)
+            .map(|id| format!("<@{}>", id))
+            .collect();
+        description.push_str(&format!(
+            "Example users to reactivate ({}): {}\n",
+            to_reactivate.len(),
+            sample.join(", ")
+        ));
     }
     if !to_deactivate.is_empty() {
-        let sample: Vec<String> = to_deactivate.iter().take(examples_show).map(|id| format!("<@{}>", id)).collect();
-        description.push_str(&format!("Example users to deactivate ({}): {}\n", to_deactivate.len(), sample.join(", ")));
+        let sample: Vec<String> = to_deactivate
+            .iter()
+            .take(examples_show)
+            .map(|id| format!("<@{}>", id))
+            .collect();
+        description.push_str(&format!(
+            "Example users to deactivate ({}): {}\n",
+            to_deactivate.len(),
+            sample.join(", ")
+        ));
     }
 
     let mut embed = CreateEmbed::default()
@@ -127,16 +161,26 @@ pub async fn audit_users(
         .color(0x00BFFF);
 
     if do_fix {
-        embed = embed.field("Action", "Applied fixes (reactivate/deactivate) where needed", false);
+        embed = embed.field(
+            "Action",
+            "Applied fixes (reactivate/deactivate) where needed",
+            false,
+        );
     } else {
-        embed = embed.field("Action", "Dry run: no changes made. Re-run with `fix=true` to apply fixes", false);
+        embed = embed.field(
+            "Action",
+            "Dry run: no changes made. Re-run with `fix=true` to apply fixes",
+            false,
+        );
     }
 
-    ctx.send(poise::CreateReply::default().ephemeral(true).embed(embed)).await?;
+    ctx.send(poise::CreateReply::default().ephemeral(true).embed(embed))
+        .await?;
 
     info!(
         guild_id = guild_i64,
-        total_scanned = present_and_active + present_but_inactive + absent_but_active + absent_and_inactive,
+        total_scanned =
+            present_and_active + present_but_inactive + absent_but_active + absent_and_inactive,
         "User audit completed"
     );
 

@@ -503,6 +503,11 @@ pub async fn stats_add(
         return Ok(());
     }
 
+    if event.status == "active" {
+        ctx.say("Cannot modify stats on an active event.").await?;
+        return Ok(());
+    }
+
     if xp_per_unit < 0.0 {
         ctx.say("XP per unit cannot be negative.").await?;
         return Ok(());
@@ -562,6 +567,11 @@ pub async fn stats_remove(
         ctx.say("Cannot modify stats on an ended event.").await?;
         return Ok(());
     }
+    
+    if event.status == "active" {
+        ctx.say("Cannot modify stats on an active event.").await?;
+        return Ok(());
+    }
 
     let removed = queries::remove_event_stat(&data.db, event.id, &stat_name).await?;
 
@@ -616,6 +626,11 @@ pub async fn stats_edit(
 
     if event.status == "ended" {
         ctx.say("Cannot modify stats on an ended event.").await?;
+        return Ok(());
+    }
+    
+    if event.status == "active" {
+        ctx.say("Cannot modify stats on an active event.").await?;
         return Ok(());
     }
 
