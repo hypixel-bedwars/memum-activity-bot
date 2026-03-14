@@ -273,13 +273,19 @@ async fn increment_stat_by(
     // ----------------------------------------------------
     // Load guild XP config so we use per-guild multipliers
     // ----------------------------------------------------
-    let guild_config: GuildConfig = match queries::get_guild(pool, guild_id).await {
-        Ok(Some(g)) => serde_json::from_value(g.config_json).unwrap_or_default(),
-        Ok(None) => GuildConfig::default(),
-        Err(e) => {
-            error!(error = %e, "failed to fetch guild config");
-            GuildConfig::default()
-        }
+    let guild_config = if let Some(cached) = data.guild_configs.get(&guild_id) {
+        cached.clone()
+    } else {
+        let fetched = match queries::get_guild(pool, guild_id).await {
+            Ok(Some(g)) => serde_json::from_value(g.config_json).unwrap_or_default(),
+            Ok(None) => GuildConfig::default(),
+            Err(e) => {
+                error!(error = %e, "failed to fetch guild config");
+                GuildConfig::default()
+            }
+        };
+        data.guild_configs.insert(guild_id, fetched.clone());
+        fetched
     };
 
     let xp_config = XPConfig::new(guild_config.xp_config.clone());

@@ -22,3 +22,4 @@ imageproc = { version = "0.24", default-features = false }
 base64 = "0.22.1"
 chrono = "0.4.44"
 uuid = { version = "1.22.0", features = ["serde", "v4"] }
+dashmap = "6"

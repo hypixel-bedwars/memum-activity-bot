@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use poise::serenity_prelude as serenity;
 use sqlx::PgPool;
 use tracing::info;
@@ -87,6 +88,7 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
                     hypixel: hypixel.clone(),
                     config: config.clone(),
                     leaderboard_cache,
+                    guild_configs: DashMap::new(),
                     message_validation: MessageValidationState::default(),
                     voice_sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
                     http: ctx.http.clone(),

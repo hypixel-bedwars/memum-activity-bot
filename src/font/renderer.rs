@@ -30,6 +30,9 @@
 //!
 //! Any character not found in these sheets advances the cursor by a
 //! space-width placeholder (4 scaled pixels).
+//! 
+//! Most of the code was just recreated from a different renderer
+//! I will probably switch to HTML soon as Armenium also wants to work on this project 
 
 use std::collections::HashMap;
 use std::sync::OnceLock;

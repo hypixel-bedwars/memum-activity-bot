@@ -5,10 +5,11 @@
 /// serves as the universal interface between stat sources and the XP calculator.
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use sqlx::PgPool;
 
 use crate::commands::leaderboard::leaderboard::LeaderboardCache;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, GuildConfig};
 use crate::database::models::{MessageValidationState, VoiceSessionState};
 use crate::hypixel::client::HypixelClient;
 use poise::serenity_prelude as serenity;
@@ -39,6 +40,10 @@ pub struct Data {
 
     /// Timed cache for leaderboard page images, keyed by `(guild_id, page)`.
     pub leaderboard_cache: LeaderboardCache,
+
+    /// In-memory cache for guild configurations, keyed by `guild_id`.
+    /// Avoids repeated database queries for guild XP configs.
+    pub guild_configs: DashMap<i64, GuildConfig>,
 
     /// State for message validation, used by the Discord activity tracker to determine
     /// if a message is valid for XP (e.g. not a bot command, not a duplicate, etc.).
