@@ -19,6 +19,7 @@ use crate::events::events;
 use crate::hypixel::client::HypixelClient;
 use crate::shared::types::{Data, Error};
 use crate::sweeper;
+use crate::utils::event_leaderboard_updater;
 use crate::utils::leaderboard_updater;
 
 /// Build and return the Poise framework, ready to be started.
@@ -33,7 +34,9 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
 
     // Clone values that need to move into closures.
     let lb_db = db.clone();
+    let lb_db2 = db.clone();
     let lb_config = config.clone();
+    let lb_interval_secs = config.leaderboard_cache_seconds;
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -123,6 +126,13 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
                     lb_db,
                     Arc::clone(&ctx.http),
                     lb_config,
+                );
+
+                // Event leaderboard updater
+                event_leaderboard_updater::start_event_leaderboard_updater(
+                    lb_db2,
+                    Arc::clone(&ctx.http),
+                    lb_interval_secs,
                 );
 
                 // Register slash commands to the configured guild only.

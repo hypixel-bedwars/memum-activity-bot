@@ -52,6 +52,12 @@ pub struct LevelCardParams {
     pub hypixel_rank: Option<String>,
     /// The colour of the `+` symbol in the player's rank badge (e.g. `"GOLD"`, `"RED"`).
     pub hypixel_rank_plus_color: Option<String>,
+
+    /// When `true` the card is rendered in event mode:
+    /// - The "LEVEL X" label is suppressed.
+    /// - The XP progress bar is replaced with a "TOTAL EVENT XP: N" label.
+    /// - The "MILESTONES" section is hidden.
+    pub event_mode: bool,
 }
 
 /// Render the level card and return the PNG bytes.
@@ -169,14 +175,16 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
         name_col,
     );
 
-    font.render_text(
-        &mut img,
-        124,
-        62,
-        &format!("LEVEL {}", params.level),
-        2,
-        CYAN,
-    );
+    if !params.event_mode {
+        font.render_text(
+            &mut img,
+            124,
+            62,
+            &format!("LEVEL {}", params.level),
+            2,
+            CYAN,
+        );
+    }
 
     let rank_colour = if let Some(rank) = params.rank {
         if rank == 1 {
@@ -190,43 +198,62 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
         MUTED
     };
 
-    if let Some(rank) = params.rank {
+    if !params.event_mode {
+        if let Some(rank) = params.rank {
+            font.render_text(
+                &mut img,
+                124,
+                92,
+                &format!("RANK #{}", rank),
+                2,
+                rank_colour,
+            );
+        }
+    } else {
+        if let Some(rank) = params.rank {
+            font.render_text(
+                &mut img,
+                124,
+                77,
+                &format!("RANK #{}", rank),
+                2,
+                rank_colour,
+            );
+        }
+    }
+
+    // == PROGRESS BAR / EVENT XP =============================================
+    if params.event_mode {
+        // In event mode: show total event XP as a label instead of a progress bar.
+        let xp_label = format!("TOTAL EVENT XP: {:.0}", params.total_xp);
+        font.render_text(&mut img, 28, 136, &xp_label, 2, CYAN);
+    } else {
+        fill_rounded_rect(&mut img, 28, 120, 944, 18, 9, BAR_BG);
+
+        let pct = if params.xp_for_next_level > 0.0 {
+            (params.xp_this_level / params.xp_for_next_level).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let fill_w = (944.0 * pct).round() as u32;
+        if fill_w > 0 {
+            fill_rounded_rect(&mut img, 28, 120, fill_w.max(18), 18, 9, CYAN);
+        }
+
+        let percentage_complete = params.xp_this_level / params.xp_for_next_level * 100.0;
+
         font.render_text(
             &mut img,
-            124,
-            92,
-            &format!("RANK #{}", rank),
+            28,
+            146,
+            &format!(
+                "{:.0} / {:.0} XP ({:.1}%)",
+                params.xp_this_level, params.xp_for_next_level, percentage_complete
+            ),
             2,
-            rank_colour,
+            MUTED,
         );
     }
-
-    // == PROGRESS BAR ========================================================
-    fill_rounded_rect(&mut img, 28, 120, 944, 18, 9, BAR_BG);
-
-    let pct = if params.xp_for_next_level > 0.0 {
-        (params.xp_this_level / params.xp_for_next_level).clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-    let fill_w = (944.0 * pct).round() as u32;
-    if fill_w > 0 {
-        fill_rounded_rect(&mut img, 28, 120, fill_w.max(18), 18, 9, CYAN);
-    }
-
-    let percentage_complete = params.xp_this_level / params.xp_for_next_level * 100.0;
-
-    font.render_text(
-        &mut img,
-        28,
-        146,
-        &format!(
-            "{:.0} / {:.0} XP ({:.1}%)",
-            params.xp_this_level, params.xp_for_next_level, percentage_complete
-        ),
-        2,
-        MUTED,
-    );
 
     // == DIVIDER =============================================================
     fill_rect(&mut img, 28, 172, 944, 2, DIVIDER);
@@ -252,76 +279,80 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
     }
 
     // == MILESTONE BADGES ====================================================
-    let milestones_x = 540;
-    let milestones_y = 188;
-    font.render_text(&mut img, milestones_x, milestones_y, "MILESTONES", 2, CYAN);
+    if !params.event_mode {
+        let milestones_x = 540;
+        let milestones_y = 188;
+        font.render_text(&mut img, milestones_x, milestones_y, "MILESTONES", 2, CYAN);
 
-    let max_milestones = 8;
-    let col1_x = milestones_x;
-    let col2_x = milestones_x + 200;
-    let base_y = milestones_y + 26;
-    let row_step = 22;
+        let max_milestones = 8;
+        let col1_x = milestones_x;
+        let col2_x = milestones_x + 200;
+        let base_y = milestones_y + 26;
+        let row_step = 22;
 
-    let xp_pct = if params.xp_for_next_level > 0.0 {
-        (params.xp_this_level / params.xp_for_next_level).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let current_fractional_level = params.level as f64 + xp_pct;
+        let xp_pct = if params.xp_for_next_level > 0.0 {
+            (params.xp_this_level / params.xp_for_next_level).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let current_fractional_level = params.level as f64 + xp_pct;
 
-    for (i, (m_level, reached)) in params
-        .milestone_progress
-        .iter()
-        .take(max_milestones)
-        .enumerate()
-    {
-        let column = i / 4;
-        let row = i % 4;
-        let x = if column == 0 { col1_x } else { col2_x };
-        let y = base_y + (row as u32) * row_step;
+        for (i, (m_level, reached)) in params
+            .milestone_progress
+            .iter()
+            .take(max_milestones)
+            .enumerate()
+        {
+            let column = i / 4;
+            let row = i % 4;
+            let x = if column == 0 { col1_x } else { col2_x };
+            let y = base_y + (row as u32) * row_step;
 
-        let m_level_f = *m_level as f64;
+            let m_level_f = *m_level as f64;
 
-        let percentage = if i == 0 {
-            ((current_fractional_level / m_level_f) * 100.0)
-                .clamp(0.0, 100.0)
-                .round() as i32
-        } else if let Some((next_m_tuple, _)) = params.milestone_progress.get(i + 1) {
-            let next_m_f = *next_m_tuple as f64;
+            let percentage = if i == 0 {
+                ((current_fractional_level / m_level_f) * 100.0)
+                    .clamp(0.0, 100.0)
+                    .round() as i32
+            } else if let Some((next_m_tuple, _)) = params.milestone_progress.get(i + 1) {
+                let next_m_f = *next_m_tuple as f64;
 
-            if current_fractional_level >= next_m_f {
-                100
-            } else if current_fractional_level < m_level_f {
-                0
+                if current_fractional_level >= next_m_f {
+                    100
+                } else if current_fractional_level < m_level_f {
+                    0
+                } else {
+                    (((current_fractional_level - m_level_f) / (next_m_f - m_level_f)) * 100.0)
+                        .round() as i32
+                }
             } else {
-                (((current_fractional_level - m_level_f) / (next_m_f - m_level_f)) * 100.0).round()
-                    as i32
-            }
-        } else {
-            if params.level >= *m_level { 100 } else { 0 }
-        };
+                if params.level >= *m_level { 100 } else { 0 }
+            };
 
-        let color = if percentage > 0 {
-            if *reached { GREEN } else { WHITE }
-        } else {
-            MUTED
-        };
+            let color = if percentage > 0 {
+                if *reached { GREEN } else { WHITE }
+            } else {
+                MUTED
+            };
 
-        font.render_text(
-            &mut img,
-            x,
-            y,
-            &format!("Level {} ({}%)", m_level, percentage),
-            2,
-            color,
-        );
+            font.render_text(
+                &mut img,
+                x,
+                y,
+                &format!("Level {} ({}%)", m_level, percentage),
+                2,
+                color,
+            );
+        }
     }
 
     // == XP GAINED (right-aligned to x=972) ==================================
-    let xp_text = format!("+{:.0} XP GAINED", params.xp_gained);
-    let text_w = font.measure_text(&xp_text, 2);
-    let xp_x = 972u32.saturating_sub(text_w);
-    font.render_text(&mut img, xp_x, 146, &xp_text, 2, MUTED);
+    if !params.event_mode {
+        let xp_text = format!("+{:.0} XP GAINED", params.xp_gained);
+        let text_w = font.measure_text(&xp_text, 2);
+        let xp_x = 972u32.saturating_sub(text_w);
+        font.render_text(&mut img, xp_x, 146, &xp_text, 2, MUTED);
+    }
 
     // == ENCODE PNG ===========================================================
     let mut buf: Vec<u8> = Vec::new();

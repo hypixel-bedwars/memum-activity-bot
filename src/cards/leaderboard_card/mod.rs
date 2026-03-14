@@ -52,6 +52,9 @@ const MILESTONE_ROW_H: u32 = 40;
 const MILESTONE_BOTTOM_PAD: u32 = 16;
 const MILESTONE_HEADER_GAP: u32 = 30;
 
+/// Extra vertical space reserved at the top when a card title is present.
+const TITLE_H: u32 = 50;
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -90,6 +93,14 @@ pub struct LeaderboardCardParams {
     pub page: u32,
     /// Total number of pages for the footer.
     pub total_pages: u32,
+    /// Optional title drawn above the column headers (e.g. event name).
+    /// When `Some`, the image height is increased by `TITLE_H` to make room.
+    pub title: Option<String>,
+    /// Whether to show the Level column. Set to `false` for event leaderboards.
+    pub show_level: bool,
+    /// Override the empty-state message (shown when `rows` is empty).
+    /// Falls back to `"No players to display"` when `None`.
+    pub custom_empty_message: Option<String>,
 }
 
 /// Parameters for rendering a standalone milestone card.
@@ -103,39 +114,58 @@ pub struct MilestoneCardParams {
 /// Render a leaderboard card and return the PNG bytes.
 pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
     debug!(
-        "leaderboard_card::render: page={} total_pages={} rows={}",
+        "leaderboard_card::render: page={} total_pages={} rows={} title={:?} show_level={}",
         params.page,
         params.total_pages,
         params.rows.len(),
+        params.title,
+        params.show_level,
     );
 
     let font = FontRenderer::get();
 
-    let mut img = RgbaImage::from_pixel(IMG_W, BASE_IMG_H, BG);
+    // If a title is provided, the image is taller to accommodate it.
+    let img_h = if params.title.is_some() {
+        BASE_IMG_H + TITLE_H
+    } else {
+        BASE_IMG_H
+    };
+    // Vertical offset applied to every element below the title row.
+    let y_offset = if params.title.is_some() { TITLE_H } else { 0 };
+
+    let mut img = RgbaImage::from_pixel(IMG_W, img_h, BG);
+
+    // == TITLE (optional) =====================================================
+    if let Some(title) = &params.title {
+        let title_scale = 5u32;
+        let title_w = font.measure_text(title, title_scale);
+        let title_x = (IMG_W - title_w) / 2;
+        let title_y = MARGIN;
+        font.render_formatted_shadowed(&mut img, title_x, title_y, title, title_scale, WHITE);
+    }
 
     // == HEADER ===============================================================
     let header_x = MARGIN;
-    let header_y = MARGIN;
+    let header_y = MARGIN + y_offset;
     let header_w = IMG_W - MARGIN * 2;
+
+    // == COLUMN LAYOUT ========================================================
+    // When show_level is false (event leaderboard) the Level column is hidden
+    // and the XP column stays in its original position.
+    let rank_column_x = header_x + 20;
+    let username_column_center = header_x + 350;
+    let level_column_center = header_x + 700;
+    // XP column stays at the right regardless of show_level.
+    let xp_column_center = header_x + header_w - 120;
 
     // == COLUMN HEADERS =======================================================
     let col_header_y = header_y + 10;
-
-    // Column layout
-    let rank_column_x = header_x + 20;
-
-    // Center of the entire "rank badge + username" column
-    let username_column_center = header_x + 350;
-
-    let level_column_center = header_x + 700;
-    let xp_column_center = header_x + header_w - 120;
 
     // Rank header
     font.render_text(&mut img, rank_column_x, col_header_y, "Rank", 3, MUTED);
 
     let username_header = "Username";
     let username_header_w = font.measure_text(username_header, 3);
-
     font.render_text(
         &mut img,
         username_column_center - username_header_w / 2,
@@ -145,21 +175,21 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         MUTED,
     );
 
-    let level_header = "Level";
-    let level_header_w = font.measure_text(level_header, 3);
-
-    font.render_text(
-        &mut img,
-        level_column_center - level_header_w / 2,
-        col_header_y,
-        level_header,
-        3,
-        MUTED,
-    );
+    if params.show_level {
+        let level_header = "Level";
+        let level_header_w = font.measure_text(level_header, 3);
+        font.render_text(
+            &mut img,
+            level_column_center - level_header_w / 2,
+            col_header_y,
+            level_header,
+            3,
+            MUTED,
+        );
+    }
 
     let xp_header = "XP";
     let xp_header_w = font.measure_text(xp_header, 3);
-
     font.render_text(
         &mut img,
         xp_column_center - xp_header_w / 2,
@@ -168,6 +198,7 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         3,
         MUTED,
     );
+
     // == ROWS =================================================================
     let rows_start_y = col_header_y + 28;
 
@@ -203,11 +234,6 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         let text_y = row_y + 14;
         let text_scale = 5u32;
 
-        // Parse the stored rank string into a HypixelRank enum so we can
-        // derive colours and label text.
-        // The DB stores "SUPERSTAR" directly for MVP++ players (matching the
-        // Hypixel monthlyPackageRank value). For all other ranks it stores the
-        // newPackageRank value (e.g. "VIP", "MVP_PLUS").
         let raw_rank = row.hypixel_rank.as_deref();
         let (new_pkg, monthly_pkg) = if raw_rank == Some("SUPERSTAR") {
             (None, Some("SUPERSTAR"))
@@ -216,23 +242,15 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         };
         let hypixel_rank = HypixelRank::from_api(new_pkg, monthly_pkg);
 
-        // Measure rank badge width (must come after from_api so hypixel_rank is in scope)
         let mut badge_w = 0;
-
         if hypixel_rank != HypixelRank::None {
             let label = hypixel_rank.display_label();
             badge_w = font.measure_text(label, text_scale) + 6;
         }
 
-        // Measure username width
         let username_w = font.measure_text(&row.username, text_scale);
-
-        // Combined width of the whole badge + username block
         let total_name_w = badge_w + username_w;
-
-        // Center the combined block inside the username column
         let mut cursor_x = username_column_center - total_name_w / 2;
-
         let name_col = hypixel_rank.name_color();
 
         debug!(
@@ -241,33 +259,23 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         );
 
         if hypixel_rank != HypixelRank::None {
-            // Decompose the label into coloured segments.
-            // e.g. "[MVP+]" → "[MVP" in cyan, "+" in gold, "]" in cyan.
-            let label = hypixel_rank.display_label(); // e.g. "[MVP+]"
+            let label = hypixel_rank.display_label();
             let name_col = hypixel_rank.name_color();
-
-            // Determine where the "+" sits inside the label (if any).
             let plus_color = plus_color_to_rgba(row.hypixel_rank_plus_color.as_deref());
 
             if let Some(plus_pos) = label.find('+') {
-                // Segment before the '+' (includes '[' and rank name)
                 let before = &label[..plus_pos];
-                // Number of '+' characters (VIP+ → 1, MVP++ → 2)
                 let plus_count = label[plus_pos..].chars().take_while(|&c| c == '+').count();
-                // Segment after the last '+' (usually ']')
                 let after_start = plus_pos + plus_count;
                 let after = &label[after_start..];
 
-                // Render "[RANK" part
                 font.render_text(&mut img, cursor_x, text_y, before, text_scale, name_col);
                 cursor_x += font.measure_text(before, text_scale);
 
-                // Render '+' (or '++') in plus_color
                 let plus_str = &label[plus_pos..after_start];
                 font.render_text(&mut img, cursor_x, text_y, plus_str, text_scale, plus_color);
                 cursor_x += font.measure_text(plus_str, text_scale);
 
-                // Render ']' in name color
                 if !after.is_empty() {
                     font.render_formatted_shadowed(
                         &mut img, cursor_x, text_y, after, text_scale, name_col,
@@ -275,14 +283,12 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
                     cursor_x += font.measure_text(after, text_scale);
                 }
             } else {
-                // No '+' (e.g. "[VIP]") — render entire label in name color
                 font.render_formatted_shadowed(
                     &mut img, cursor_x, text_y, label, text_scale, name_col,
                 );
                 cursor_x += font.measure_text(label, text_scale);
             }
 
-            // Small gap between badge and username
             cursor_x += 6;
         }
 
@@ -296,38 +302,38 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
             name_col,
         );
 
-        let level_text = format!("{}", row.level);
-        let level_w = font.measure_text(&level_text, text_scale);
+        // Level (only rendered when show_level is true)
+        if params.show_level {
+            let level_text = format!("{}", row.level);
+            let level_w = font.measure_text(&level_text, text_scale);
+            let level_x = level_column_center - level_w / 2;
+            font.render_formatted_shadowed(
+                &mut img,
+                level_x,
+                row_y + 14,
+                &level_text,
+                text_scale,
+                CYAN,
+            );
+        }
 
-        let level_column_center = header_x + 700;
-        let level_x = level_column_center - level_w / 2;
-
-        // Level
-        font.render_formatted_shadowed(
-            &mut img,
-            level_x,
-            row_y + 14,
-            &level_text,
-            text_scale,
-            CYAN,
-        );
         // XP right aligned
         let xp_text = format_xp(row.total_xp);
         let xp_w = font.measure_text(&xp_text, text_scale);
-
-        let xp_column_center = header_x + header_w - 120;
         let xp_x = xp_column_center - xp_w / 2;
-
         font.render_formatted_shadowed(&mut img, xp_x, row_y + 14, &xp_text, text_scale, WHITE);
     }
 
     // == EMPTY STATE ==========================================================
     if params.rows.is_empty() {
         debug!("leaderboard_card::render: no rows to render (empty state)");
-        let empty_text = "No players to display";
+        let empty_text = params
+            .custom_empty_message
+            .as_deref()
+            .unwrap_or("No players to display");
         let text_w = font.measure_text(empty_text, 3);
         let cx = (IMG_W - text_w) / 2;
-        font.render_text(&mut img, cx, BASE_IMG_H / 2 - 12, empty_text, 3, MUTED);
+        font.render_text(&mut img, cx, img_h / 2 - 12, empty_text, 3, MUTED);
     }
 
     // == ENCODE PNG ============================================================
@@ -363,26 +369,11 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
 
     let mut img = RgbaImage::from_pixel(IMG_W, img_h, BG);
 
-    // == PANEL ================================================================
-    // fill_rounded_rect(
-    //     &mut img,
-    //     MARGIN,
-    //     MARGIN,
-    //     IMG_W - MARGIN * 2,
-    //     img_h - MARGIN * 2,
-    //     CORNER_R,
-    //     PANEL,
-    // );
-
     // Total users right-aligned
     let users_text = format!("{} registered players", params.total_users);
     let users_w = font.measure_text(&users_text, 2);
     let users_x = (IMG_W - MARGIN * 2).saturating_sub(20 + users_w) + MARGIN;
     font.render_text(&mut img, users_x, MARGIN + 10, &users_text, 2, MUTED);
-
-    // Divider below header
-    // let divider_y = MARGIN + MILESTONE_SECTION_HEADER_H - 6;
-    // fill_rect(&mut img, MARGIN, divider_y, IMG_W - MARGIN * 2, 2, DIVIDER);
 
     // == MILESTONE ROWS =======================================================
     if params.milestones.is_empty() {
@@ -401,17 +392,6 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
         let first_row_y = MARGIN + 20;
         for (i, milestone) in params.milestones.iter().enumerate() {
             let row_y = first_row_y + (i as u32) * MILESTONE_ROW_H;
-
-            // Alternating row background
-            // let row_bg = if i % 2 == 0 { ROW_EVEN } else { ROW_ODD };
-            // fill_rect(
-            //     &mut img,
-            //     MARGIN,
-            //     row_y,
-            //     IMG_W - MARGIN * 2,
-            //     MILESTONE_ROW_H,
-            //     row_bg,
-            // );
 
             // Level badge
             let level_text = format!("Level {}", milestone.level);
@@ -436,29 +416,6 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
                 WHITE,
             );
 
-            // Progress bar (right side)
-            // let bar_x = MARGIN + 700;
-            // let bar_w = IMG_W - MARGIN * 2 - 700 - 20;
-            // let bar_h = 12u32;
-            // let bar_y = row_y + (MILESTONE_ROW_H - bar_h) / 2;
-            // fill_rounded_rect(&mut img, bar_x, bar_y, bar_w, bar_h, bar_h / 2, BAR_BG);
-            // let pct = if params.total_users > 0 {
-            //     (milestone.user_count as f64 / params.total_users as f64).clamp(0.0, 1.0)
-            // } else {
-            //     0.0
-            // };
-            // let fill_w = ((bar_w as f64) * pct).round() as u32;
-            // if fill_w > 0 {
-            //     fill_rounded_rect(
-            //         &mut img,
-            //         bar_x,
-            //         bar_y,
-            //         fill_w.max(bar_h),
-            //         bar_h,
-            //         bar_h / 2,
-            //         CYAN,
-            //     );
-            // }
         }
     }
 

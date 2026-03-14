@@ -201,6 +201,7 @@ pub async fn level(
         milestone_progress,
         hypixel_rank: db_user.hypixel_rank.clone(),
         hypixel_rank_plus_color: db_user.hypixel_rank_plus_color.clone(),
+        event_mode: false,
     };
 
     let png_bytes = level_card::render(&params);

@@ -297,6 +297,14 @@ pub struct DbEvent {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct EventParticipant {
+    /// Discord snowflake ID (mapped from users.discord_user_id)
+    pub user_id: i64,
+    /// Optional Minecraft username for nicer ordering/display
+    pub minecraft_username: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // event_stats
 // ---------------------------------------------------------------------------
@@ -334,11 +342,34 @@ pub struct DbEventXP {
 // ---------------------------------------------------------------------------
 
 /// A single entry in an event leaderboard — user plus their total event XP.
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EventLeaderboardEntry {
     pub discord_user_id: i64,
     pub minecraft_username: Option<String>,
+    pub minecraft_uuid: Uuid,
+    pub hypixel_rank: Option<String>,
+    pub hypixel_rank_plus_color: Option<String>,
     pub total_event_xp: f64,
+}
+
+// ---------------------------------------------------------------------------
+// persistent_event_leaderboards
+// ---------------------------------------------------------------------------
+
+/// A row from the `persistent_event_leaderboards` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbPersistentEventLeaderboard {
+    pub id: i64,
+    pub event_id: i64,
+    pub guild_id: i64,
+    pub channel_id: i64,
+    /// JSON array of Discord message IDs (one per leaderboard page).
+    pub message_ids: Value,
+    /// Discord message ID for the status / last-updated message.
+    /// `0` means none has been sent yet.
+    pub status_message_id: i64,
+    pub created_at: DateTime<Utc>,
+    pub last_updated: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------

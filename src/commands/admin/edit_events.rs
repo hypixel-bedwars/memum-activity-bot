@@ -1,19 +1,24 @@
-/// `/edit-events` command group — admin only.
+/// `/edit-event` command group — admin only.
 ///
-/// Provides subcommands for managing guild events that track stats and award XP:
-/// - `create`       — create a new event (seeds event_stats from guild xp_config)
-/// - `edit`         — change event name, description, or dates
-/// - `delete`       — delete a pending/active event
-/// - `stats-add`    — add a stat to an event
-/// - `stats-remove` — remove a stat from an event
-/// - `stats-edit`   — change the XP-per-unit for an event stat
-/// - `list`         — list all events with their status
+/// Provides subcommands for managing guild events:
+/// - `new`                 — create a new event
+/// - `edit`                — edit event details
+/// - `delete`              — delete an event
+/// - `start`               — force start an event
+/// - `end`                 — force end an active event
+/// - `participants`        — list event participants with pagination
+/// - `leaderboard persist` — send a persistent leaderboard message
+/// - `stats-add`           — add a stat to an event
+/// - `stats-remove`        — remove a stat from an event
+/// - `stats-edit`          — edit XP per unit for a stat
+/// - `list`                — list all events
 ///
 /// All subcommands are ephemeral and require the admin check.
-use poise::serenity_prelude::{self as serenity, CreateEmbed};
+use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateEmbed, CreateMessage};
 use tracing::{error, info};
 
-use crate::commands::logger::logger::{logger, logger_system, LogType};
+use crate::commands::leaderboard::helpers as lb_helpers;
+use crate::commands::logger::logger::{LogType, logger, logger_system};
 use crate::config::GuildConfig;
 use crate::database::queries;
 use crate::shared::types::{Context, Error};
@@ -123,11 +128,15 @@ async fn autocomplete_event_stat<'a>(
     slash_command,
     guild_only,
     ephemeral,
-    rename = "edit-events",
+    rename = "edit-event",
     subcommands(
-        "create",
+        "new",
         "edit",
         "delete",
+        "start",
+        "end",
+        "participants",
+        "edit_event_leaderboard",
         "stats_add",
         "stats_remove",
         "stats_edit",
@@ -135,7 +144,7 @@ async fn autocomplete_event_stat<'a>(
         "backfill"
     )
 )]
-pub async fn edit_events(_ctx: Context<'_>) -> Result<(), Error> {
+pub async fn edit_event(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
@@ -146,7 +155,7 @@ pub async fn edit_events(_ctx: Context<'_>) -> Result<(), Error> {
     ephemeral,
     check = "crate::utils::permissions::admin_check"
 )]
-pub async fn create(
+pub async fn new(
     ctx: Context<'_>,
     #[description = "Unique event name"] name: String,
     #[description = "Optional description"] description: Option<String>,
@@ -644,7 +653,7 @@ pub async fn list(ctx: Context<'_>) -> Result<(), Error> {
     let events = queries::list_events(&data.db, guild_id).await?;
 
     if events.is_empty() {
-        ctx.say("No events have been created yet. Use `/edit-events create` to create one.")
+        ctx.say("No events have been created yet. Use `/edit-events new` to create one.")
             .await?;
         return Ok(());
     }
@@ -752,9 +761,7 @@ pub async fn backfill(
                 .title(format!("Backfill Complete — {event_name}"))
                 .description(format!(
                     "Deltas processed: **{}**\nXP awarded: **{:.0}**\nUsers affected: **{}**",
-                    summary.deltas_processed,
-                    summary.total_xp_awarded,
-                    summary.users_affected,
+                    summary.deltas_processed, summary.total_xp_awarded, summary.users_affected,
                 ))
                 .color(0x2ECC71);
 
@@ -781,6 +788,303 @@ pub async fn backfill(
             ctx.say(format!("Backfill failed: {e}")).await?;
         }
     }
+
+    Ok(())
+}
+
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::utils::permissions::admin_check"
+)]
+pub async fn start(
+    ctx: Context<'_>,
+    #[description = "Force starts the selected event"]
+    #[autocomplete = "autocomplete_event_name"] event_name: String,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let data = ctx.data();
+
+    let event = queries::get_event_by_name(&data.db, guild_id, &event_name).await?;
+
+    if let Some(event) = event {
+        queries::force_start_event(&data.db, event.id).await?;
+        ctx.say(format!("Event **{}** has been force started.", event_name))
+            .await?;
+    } else {
+        ctx.say("Event not found.").await?;
+    }
+
+    Ok(())
+}
+
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::utils::permissions::admin_check"
+)]
+pub async fn end(
+    ctx: Context<'_>,
+    #[description = "Force ends the selected event"]
+    #[autocomplete = "autocomplete_event_name"] event_name: String,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let data = ctx.data();
+
+    let event = queries::get_event_by_name(&data.db, guild_id, &event_name).await?;
+
+    if let Some(event) = event {
+        queries::force_end_event(&data.db, event.id).await?;
+        ctx.say(format!("Event **{}** has been force ended.", event_name))
+            .await?;
+    } else {
+        ctx.say("Event not found.").await?;
+    }
+
+    Ok(())
+}
+
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    check = "crate::utils::permissions::admin_check"
+)]
+pub async fn participants(
+    ctx: Context<'_>,
+    #[description = "Lists all the participants of the selected event."]
+    #[autocomplete = "autocomplete_event_name"] event_name: String,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let data = ctx.data();
+
+    let event = queries::get_event_by_name(&data.db, guild_id, &event_name).await?;
+
+    let Some(event) = event else {
+        ctx.say("Event not found.").await?;
+        return Ok(());
+    };
+
+    let participants = queries::get_event_participants(&data.db, event.id).await?;
+
+    if participants.is_empty() {
+        ctx.say("No participants yet.").await?;
+        return Ok(());
+    }
+
+    let list = participants
+        .iter()
+        .take(10)
+        .map(|p| format!("<@{}>", p.user_id))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let embed = CreateEmbed::default()
+        .title(format!("Participants — {}", event_name))
+        .description(list)
+        .color(0x00BFFF);
+
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
+
+    Ok(())
+}
+
+#[poise::command(slash_command, subcommands("persist"), rename = "leaderboard")]
+pub async fn edit_event_leaderboard(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
+#[poise::command(
+    slash_command,
+    guild_only,
+    check = "crate::utils::permissions::admin_check"
+)]
+pub async fn persist(
+    ctx: Context<'_>,
+    #[autocomplete = "autocomplete_any_event_name"] event_name: Option<String>,
+    #[description = "Channel to post the persistent leaderboard in"] channel: serenity::ChannelId,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
+    let guild_id = ctx
+        .guild_id()
+        .ok_or("This command can only be used in a server.")?;
+    let guild_id_i64 = guild_id.get() as i64;
+
+    // Resolve event — use provided name or fall back to the latest event.
+    let resolved_name = match event_name {
+        Some(n) => n,
+        None => queries::get_latest_event_name(&ctx.data().db, guild_id_i64)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No events found in this server."))?,
+    };
+
+    let event =
+        match queries::get_event_by_name(&ctx.data().db, guild_id_i64, &resolved_name).await? {
+            Some(e) => e,
+            None => {
+                ctx.send(
+                    poise::CreateReply::default()
+                        .ephemeral(true)
+                        .content(format!("Event **{resolved_name}** not found.")),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+
+    // If there's already a persistent leaderboard for this event, delete the
+    // old messages before posting fresh ones.
+    if let Some(existing) =
+        queries::get_persistent_event_leaderboard(&ctx.data().db, event.id).await?
+    {
+        let old_msg_ids: Vec<u64> =
+            serde_json::from_value(existing.message_ids.clone()).unwrap_or_default();
+        let old_channel = serenity::ChannelId::new(existing.channel_id as u64);
+
+        for msg_id in old_msg_ids {
+            let _ = old_channel
+                .delete_message(&ctx.http(), serenity::MessageId::new(msg_id))
+                .await;
+        }
+        if existing.status_message_id != 0 {
+            let _ = old_channel
+                .delete_message(
+                    &ctx.http(),
+                    serenity::MessageId::new(existing.status_message_id as u64),
+                )
+                .await;
+        }
+
+        queries::delete_persistent_event_leaderboard(&ctx.data().db, event.id).await?;
+    }
+
+    // Determine how many pages to post.
+    let total_participants = queries::count_event_participants(&ctx.data().db, event.id).await?;
+    // Always show at least one page (pending / empty state).
+    let total_pages = ((total_participants as f64) / lb_helpers::PAGE_SIZE as f64)
+        .ceil()
+        .max(1.0) as u32;
+
+    let mut message_ids: Vec<u64> = Vec::new();
+
+    for page in 1..=total_pages {
+        let result = lb_helpers::generate_event_leaderboard_page(
+            &ctx.data().db,
+            event.id,
+            &event.name,
+            &event.status,
+            event.start_date.timestamp(),
+            page,
+        )
+        .await;
+
+        let (png_bytes, _) = match result {
+            Ok(v) => v,
+            Err(e) => {
+                ctx.send(
+                    poise::CreateReply::default()
+                        .ephemeral(true)
+                        .content(format!("Failed to generate leaderboard page {page}: {e}")),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+
+        let attachment =
+            CreateAttachment::bytes(png_bytes, format!("event_leaderboard_page_{page}.png"));
+        let msg = channel
+            .send_message(&ctx.http(), CreateMessage::new().add_file(attachment))
+            .await?;
+
+        message_ids.push(msg.id.get());
+    }
+
+    // Post status / last-updated message.
+    let unix_time = time::OffsetDateTime::now_utc().unix_timestamp();
+    let status_content = if event.status == "ended" {
+        format!(
+            "**Event has ended.** These are the final standings.\n\
+             -# Last updated: <t:{unix_time}>"
+        )
+    } else {
+        format!(
+            "Last Updated: <t:{unix_time}>\n\
+             -# Live standings — updates every {} seconds.",
+            ctx.data().config.leaderboard_cache_seconds
+        )
+    };
+
+    let status_msg = channel
+        .send_message(&ctx.http(), CreateMessage::new().content(status_content))
+        .await?;
+
+    let status_message_id = status_msg.id.get() as i64;
+
+    // Store in database.
+    let now = chrono::Utc::now();
+    let message_ids_json = serde_json::json!(message_ids);
+
+    queries::upsert_persistent_event_leaderboard(
+        &ctx.data().db,
+        event.id,
+        guild_id_i64,
+        channel.get() as i64,
+        &message_ids_json,
+        status_message_id,
+        &now,
+        &now,
+    )
+    .await?;
+
+    // Confirmation embed.
+    let update_note = if event.status == "ended" {
+        "Event has ended — standings are frozen.".to_string()
+    } else {
+        format!(
+            "Auto-updates every {} seconds.",
+            ctx.data().config.leaderboard_cache_seconds
+        )
+    };
+
+    ctx.send(
+        poise::CreateReply::default().ephemeral(true).embed(
+            CreateEmbed::new()
+                .title("Persistent Event Leaderboard Created")
+                .color(0x00BFFF)
+                .field("Event", &event.name, true)
+                .field("Channel", format!("<#{}>", channel.get()), true)
+                .field("Pages", total_pages.to_string(), true)
+                .field("Status", update_note, false),
+        ),
+    )
+    .await?;
+
+    info!(
+        event_id = event.id,
+        guild_id = guild_id_i64,
+        channel_id = channel.get(),
+        pages = total_pages,
+        "Created persistent event leaderboard."
+    );
+
+    logger(
+        ctx.serenity_context(),
+        ctx.data(),
+        guild_id,
+        LogType::Info,
+        format!(
+            "{} created a persistent event leaderboard for **{}** in <#{}> ({} page(s))",
+            ctx.author().name,
+            event.name,
+            channel.get(),
+            total_pages
+        ),
+    )
+    .await?;
 
     Ok(())
 }

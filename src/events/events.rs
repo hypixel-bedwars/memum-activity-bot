@@ -5,6 +5,8 @@
 use poise::serenity_prelude as serenity;
 use tracing::{debug, warn};
 
+use crate::commands::events::events as event_cmd;
+use crate::commands::leaderboard::helpers as lb_helpers;
 use crate::commands::leaderboard::leaderboard as lb;
 use crate::commands::registration::register::perform_registration;
 use crate::config::GuildConfig;
@@ -24,9 +26,100 @@ pub async fn event_handler(
                 if let Err(e) = lb::handle_pagination(ctx, component, data).await {
                     tracing::error!(error = %e, "Leaderboard pagination handler failed");
                 }
+            } else if component.data.custom_id.starts_with("event_lb_") {
+                if let Err(e) = handle_event_lb_pagination(ctx, component, data).await {
+                    tracing::error!(error = %e, "Event leaderboard pagination handler failed");
+                }
             }
         }
     }
+
+    Ok(())
+}
+
+/// Handle pagination button clicks for event leaderboards.
+///
+/// Custom ID format: `event_lb_{event_id}_page_{page}`
+async fn handle_event_lb_pagination(
+    ctx: &serenity::Context,
+    component: &serenity::ComponentInteraction,
+    data: &Data,
+) -> Result<(), Error> {
+    // Parse the custom ID: "event_lb_{event_id}_page_{page}"
+    let custom_id = &component.data.custom_id;
+    // Strip "event_lb_" prefix
+    let rest = match custom_id.strip_prefix("event_lb_") {
+        Some(r) => r,
+        None => return Ok(()),
+    };
+    // rest = "{event_id}_page_{page}"
+    let page_marker = "_page_";
+    let page_pos = match rest.find(page_marker) {
+        Some(p) => p,
+        None => {
+            warn!(custom_id, "Event LB pagination: malformed custom_id");
+            return Ok(());
+        }
+    };
+
+    let event_id_str = &rest[..page_pos];
+    let page_str = &rest[page_pos + page_marker.len()..];
+
+    let event_id: i64 = match event_id_str.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            warn!(custom_id, "Event LB pagination: failed to parse event_id");
+            return Ok(());
+        }
+    };
+    let page: u32 = match page_str.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            warn!(custom_id, "Event LB pagination: failed to parse page");
+            return Ok(());
+        }
+    };
+
+    // Defer the update so Discord doesn't show a loading spinner.
+    component
+        .create_response(
+            ctx,
+            serenity::CreateInteractionResponse::Defer(
+                serenity::CreateInteractionResponseMessage::new(),
+            ),
+        )
+        .await?;
+
+    // Load event details.
+    let event = match queries::get_event_by_id(&data.db, event_id).await? {
+        Some(e) => e,
+        None => {
+            warn!(event_id, "Event LB pagination: event not found");
+            return Ok(());
+        }
+    };
+
+    let (png_bytes, total_pages) = lb_helpers::generate_event_leaderboard_page(
+        &data.db,
+        event.id,
+        &event.name,
+        &event.status,
+        event.start_date.timestamp(),
+        page,
+    )
+    .await?;
+
+    let attachment = serenity::CreateAttachment::bytes(png_bytes, "event_leaderboard.png");
+    let components = event_cmd::event_lb_pagination_buttons(event_id, page, total_pages);
+
+    component
+        .edit_response(
+            ctx,
+            serenity::EditInteractionResponse::new()
+                .new_attachment(attachment)
+                .components(components),
+        )
+        .await?;
 
     Ok(())
 }

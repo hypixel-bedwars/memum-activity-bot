@@ -14,8 +14,9 @@ use uuid::Uuid;
 
 use super::models::{
     BackfillSummary, DbDailySnapshot, DbEvent, DbEventStat, DbGuild, DbMilestone,
-    DbPersistentLeaderboard, DbStatDelta, DbStatsSnapshot, DbSweepCursor, DbUser, DbXP,
-    EventLeaderboardEntry, LeaderboardEntry, MilestoneWithCount,
+    DbPersistentEventLeaderboard, DbPersistentLeaderboard, DbStatDelta, DbStatsSnapshot,
+    DbSweepCursor, DbUser, DbXP, EventLeaderboardEntry, EventParticipant, LeaderboardEntry,
+    MilestoneWithCount,
 };
 
 // =========================================================================
@@ -1387,6 +1388,15 @@ pub async fn get_event(
         .await
 }
 
+/// Retrieve a single event by its primary key.
+pub async fn get_event_by_id(pool: &PgPool, event_id: i64) -> Result<Option<DbEvent>, sqlx::Error> {
+    debug!("queries::get_event_by_id: event_id={}", event_id);
+    sqlx::query_as::<_, DbEvent>("SELECT * FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_optional(pool)
+        .await
+}
+
 /// Retrieve a single event by name within a guild.
 pub async fn get_event_by_name(
     pool: &PgPool,
@@ -1529,6 +1539,83 @@ pub async fn update_event_statuses(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+pub async fn force_end_event(pool: &PgPool, event_id: i64) -> Result<(), sqlx::Error> {
+    debug!("queries::force_end_event: event_id={}", event_id);
+
+    let result = sqlx::query(
+        r#"
+        UPDATE events
+        SET status = 'ended',
+            end_snapshot_date = (
+                SELECT MAX(snapshot_date)
+                FROM daily_snapshots
+                WHERE snapshot_date <= NOW()::date
+            ),
+            updated_at = NOW()
+        WHERE id = $1 AND status != 'ended'
+        "#,
+    )
+    .bind(event_id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        debug!("force_end_event: no rows updated (event may not exist or already ended)");
+    }
+
+    Ok(())
+}
+
+pub async fn force_start_event(pool: &PgPool, event_id: i64) -> Result<(), sqlx::Error> {
+    debug!("queries::force_start_event: event_id={}", event_id);
+
+    let result = sqlx::query(
+        r#"
+        UPDATE events
+        SET status = 'active',
+            start_snapshot_date = COALESCE(
+                (
+                    SELECT MAX(snapshot_date)
+                    FROM daily_snapshots
+                    WHERE snapshot_date <= NOW()::date
+                ),
+                NOW()::date
+            ),
+            updated_at = NOW()
+        WHERE id = $1
+          AND status = 'pending'
+        "#,
+    )
+    .bind(event_id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        debug!("force_start_event: no rows updated (event may not exist or not pending)");
+    }
+
+    Ok(())
+}
+
+pub async fn get_latest_event_name(
+    pool: &PgPool,
+    guild_id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    debug!("queries::get_latest_event_name: guild_id={}", guild_id);
+
+    sqlx::query_scalar(
+        "SELECT name
+         FROM events
+         WHERE guild_id = $1
+           AND status IN ('active', 'ended')
+         ORDER BY start_date DESC
+         LIMIT 1",
+    )
+    .bind(guild_id)
+    .fetch_optional(pool)
+    .await
+}
+
 // =========================================================================
 // event_stats
 // =========================================================================
@@ -1641,6 +1728,25 @@ pub async fn seed_event_stats_from_xp_config(
     Ok(())
 }
 
+pub async fn get_event_participants(
+    pool: &PgPool,
+    event_id: i64,
+) -> Result<Vec<EventParticipant>, sqlx::Error> {
+    debug!("queries::get_event_participants: event_id={}", event_id);
+
+    sqlx::query_as::<_, EventParticipant>(
+        "SELECT DISTINCT u.discord_user_id AS user_id,
+                u.minecraft_username
+         FROM event_xp ex
+         JOIN users u ON u.id = ex.user_id
+         WHERE ex.event_id = $1
+         ORDER BY u.minecraft_username NULLS LAST, u.discord_user_id",
+    )
+    .bind(event_id)
+    .fetch_all(pool)
+    .await
+}
+
 // =========================================================================
 // event_xp
 // =========================================================================
@@ -1721,24 +1827,30 @@ pub async fn get_event_leaderboard(
     pool: &PgPool,
     event_id: i64,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<EventLeaderboardEntry>, sqlx::Error> {
     debug!(
-        "queries::get_event_leaderboard: event_id={}, limit={}",
-        event_id, limit
+        "queries::get_event_leaderboard: event_id={}, limit={}, offset={}",
+        event_id, limit, offset
     );
     sqlx::query_as::<_, EventLeaderboardEntry>(
         "SELECT u.discord_user_id,
                 u.minecraft_username,
+                u.minecraft_uuid,
+                u.hypixel_rank,
+                u.hypixel_rank_plus_color,
                 COALESCE(SUM(ex.xp_earned), 0.0) AS total_event_xp
          FROM event_xp ex
          JOIN users u ON u.id = ex.user_id
          WHERE ex.event_id = $1
-         GROUP BY u.discord_user_id, u.minecraft_username
+         GROUP BY u.discord_user_id, u.minecraft_username, u.minecraft_uuid,
+                  u.hypixel_rank, u.hypixel_rank_plus_color
          ORDER BY total_event_xp DESC
-         LIMIT $2",
+         LIMIT $2 OFFSET $3",
     )
     .bind(event_id)
     .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await
 }
@@ -1767,6 +1879,154 @@ pub async fn get_user_event_stats(
     Ok(rows)
 }
 
+/// Return the user's rank (1-indexed) within a specific event leaderboard,
+/// ordered by total event XP descending.  Returns `None` if the user has no
+/// XP recorded for this event.
+pub async fn get_user_event_rank(
+    pool: &PgPool,
+    event_id: i64,
+    user_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    debug!(
+        "queries::get_user_event_rank: event_id={}, user_id={}",
+        event_id, user_id
+    );
+    sqlx::query_scalar::<_, i64>(
+        "SELECT rank FROM (
+             SELECT user_id, RANK() OVER (ORDER BY SUM(xp_earned) DESC) AS rank
+             FROM event_xp
+             WHERE event_id = $1
+             GROUP BY user_id
+         ) sub
+         WHERE user_id = $2",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+}
+
+// =========================================================================
+// persistent_event_leaderboards
+// =========================================================================
+
+/// Count participants (distinct users) for a given event.
+pub async fn count_event_participants(pool: &PgPool, event_id: i64) -> Result<i64, sqlx::Error> {
+    debug!("queries::count_event_participants: event_id={}", event_id);
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(DISTINCT user_id) FROM event_xp WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(pool)
+            .await?;
+    Ok(row.0)
+}
+
+/// Insert or update a persistent event leaderboard entry.
+pub async fn upsert_persistent_event_leaderboard(
+    pool: &PgPool,
+    event_id: i64,
+    guild_id: i64,
+    channel_id: i64,
+    message_ids: &serde_json::Value,
+    status_message_id: i64,
+    created_at: &DateTime<Utc>,
+    last_updated: &DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    debug!(
+        "queries::upsert_persistent_event_leaderboard: event_id={}, guild_id={}, channel_id={}",
+        event_id, guild_id, channel_id
+    );
+    sqlx::query(
+        "INSERT INTO persistent_event_leaderboards
+         (event_id, guild_id, channel_id, message_ids, status_message_id, created_at, last_updated)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT(event_id) DO UPDATE SET
+             guild_id = excluded.guild_id,
+             channel_id = excluded.channel_id,
+             message_ids = excluded.message_ids,
+             status_message_id = excluded.status_message_id,
+             created_at = excluded.created_at,
+             last_updated = excluded.last_updated",
+    )
+    .bind(event_id)
+    .bind(guild_id)
+    .bind(channel_id)
+    .bind(message_ids)
+    .bind(status_message_id)
+    .bind(created_at)
+    .bind(last_updated)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Retrieve the persistent event leaderboard row for an event, if one exists.
+pub async fn get_persistent_event_leaderboard(
+    pool: &PgPool,
+    event_id: i64,
+) -> Result<Option<DbPersistentEventLeaderboard>, sqlx::Error> {
+    debug!(
+        "queries::get_persistent_event_leaderboard: event_id={}",
+        event_id
+    );
+    sqlx::query_as::<_, DbPersistentEventLeaderboard>(
+        "SELECT * FROM persistent_event_leaderboards WHERE event_id = $1",
+    )
+    .bind(event_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get all persistent event leaderboard rows (used by the updater background task).
+pub async fn get_all_persistent_event_leaderboards(
+    pool: &PgPool,
+) -> Result<Vec<DbPersistentEventLeaderboard>, sqlx::Error> {
+    debug!("queries::get_all_persistent_event_leaderboards");
+    sqlx::query_as::<_, DbPersistentEventLeaderboard>("SELECT * FROM persistent_event_leaderboards")
+        .fetch_all(pool)
+        .await
+}
+
+/// Update message IDs and last_updated for a persistent event leaderboard.
+pub async fn update_persistent_event_leaderboard_messages(
+    pool: &PgPool,
+    event_id: i64,
+    message_ids: &serde_json::Value,
+    last_updated: &DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    debug!(
+        "queries::update_persistent_event_leaderboard_messages: event_id={}, last_updated={}",
+        event_id, last_updated
+    );
+    sqlx::query(
+        "UPDATE persistent_event_leaderboards
+         SET message_ids = $1, last_updated = $2
+         WHERE event_id = $3",
+    )
+    .bind(message_ids)
+    .bind(last_updated)
+    .bind(event_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete the persistent event leaderboard row for an event.
+pub async fn delete_persistent_event_leaderboard(
+    pool: &PgPool,
+    event_id: i64,
+) -> Result<(), sqlx::Error> {
+    debug!(
+        "queries::delete_persistent_event_leaderboard: event_id={}",
+        event_id
+    );
+    sqlx::query("DELETE FROM persistent_event_leaderboards WHERE event_id = $1")
+        .bind(event_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 // =========================================================================
 // backfill
 // =========================================================================
@@ -1774,10 +2034,7 @@ pub async fn get_user_event_stats(
 /// Count the number of `stat_deltas` rows that fall within the event's time
 /// window and match one of its configured stat names. Used to give admins an
 /// estimate before running a manual backfill.
-pub async fn count_deltas_for_event(
-    pool: &PgPool,
-    event_id: i64,
-) -> Result<i64, sqlx::Error> {
+pub async fn count_deltas_for_event(pool: &PgPool, event_id: i64) -> Result<i64, sqlx::Error> {
     debug!("queries::count_deltas_for_event: event_id={}", event_id);
 
     let event: DbEvent = sqlx::query_as::<_, DbEvent>("SELECT * FROM events WHERE id = $1")
