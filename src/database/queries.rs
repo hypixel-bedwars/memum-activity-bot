@@ -1860,13 +1860,13 @@ pub async fn get_user_event_stats(
     pool: &PgPool,
     event_id: i64,
     user_id: i64,
-) -> Result<Vec<(String, f64)>, sqlx::Error> {
+) -> Result<Vec<(String, f64, f64)>, sqlx::Error> {
     debug!(
         "queries::get_user_event_stats: event_id={}, user_id={}",
         event_id, user_id
     );
-    let rows = sqlx::query_as::<_, (String, f64)>(
-        "SELECT stat_name, SUM(xp_earned) AS total_xp
+    let rows = sqlx::query_as::<_, (String, f64, f64)>(
+        "SELECT stat_name, SUM(xp_earned) AS total_xp, CAST(SUM(units) AS FLOAT8) AS total_units
          FROM event_xp
          WHERE event_id = $1 AND user_id = $2
          GROUP BY stat_name

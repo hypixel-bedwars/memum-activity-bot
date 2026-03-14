@@ -312,15 +312,15 @@ pub async fn level(
     // Per-stat XP breakdown for this event
     let stats = queries::get_user_event_stats(&ctx.data().db, event.id, db_user.id).await?;
 
-    let total_xp: f64 = stats.iter().map(|(_, xp)| xp).sum();
+    let total_xp: f64 = stats.iter().map(|(_, xp, _)| *xp).sum();
 
-    // Build stat_deltas: display name + XP amount, sorted desc, up to 8
+    // Build stat_deltas: display name + count, sorted desc by XP (already sorted from DB), up to 8
     let mut stat_deltas: Vec<(String, f64)> = stats
         .into_iter()
-        .filter(|(_, xp)| *xp > 0.0)
-        .map(|(key, xp)| (display_name_for_key(&key), xp))
+        .filter(|(_, xp, _)| *xp > 0.0)
+        .map(|(key, _, count)| (display_name_for_key(&key), count))
         .collect();
-    stat_deltas.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    // Already sorted by XP from the database query
     stat_deltas.truncate(8);
 
     // User's rank within the event leaderboard
