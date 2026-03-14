@@ -267,11 +267,13 @@ pub async fn level(
     #[description = "Event to look up (defaults to the most recent event)"]
     #[autocomplete = "autocomplete_event_name"]
     event_name: Option<String>,
+    #[description = "User to look up (defaults to you)"] user: Option<serenity::User>,
 ) -> Result<(), Error> {
     ctx.defer().await?;
 
     let guild_id = ctx.guild_id().unwrap().get() as i64;
-    let user_id = ctx.author().id.get() as i64;
+    let target = user.as_ref().unwrap_or_else(|| ctx.author());
+    let user_id = target.id.get() as i64;
     let author_name = ctx.author().name.clone();
 
     // Resolve event name

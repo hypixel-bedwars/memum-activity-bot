@@ -161,7 +161,7 @@ pub async fn generate_event_leaderboard_page(
             }
         })
         .collect();
-    
+
     // conver ts to UTC time
     let dt = DateTime::<Utc>::from_timestamp(event_start_ts, 0);
 

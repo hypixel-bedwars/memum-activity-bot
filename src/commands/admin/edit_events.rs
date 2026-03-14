@@ -801,7 +801,8 @@ pub async fn backfill(
 pub async fn start(
     ctx: Context<'_>,
     #[description = "Force starts the selected event"]
-    #[autocomplete = "autocomplete_event_name"] event_name: String,
+    #[autocomplete = "autocomplete_event_name"]
+    event_name: String,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let data = ctx.data();
@@ -828,7 +829,8 @@ pub async fn start(
 pub async fn end(
     ctx: Context<'_>,
     #[description = "Force ends the selected event"]
-    #[autocomplete = "autocomplete_event_name"] event_name: String,
+    #[autocomplete = "autocomplete_event_name"]
+    event_name: String,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let data = ctx.data();
@@ -855,7 +857,8 @@ pub async fn end(
 pub async fn participants(
     ctx: Context<'_>,
     #[description = "Lists all the participants of the selected event."]
-    #[autocomplete = "autocomplete_event_name"] event_name: String,
+    #[autocomplete = "autocomplete_event_name"]
+    event_name: String,
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let data = ctx.data();

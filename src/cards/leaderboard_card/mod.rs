@@ -415,7 +415,6 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
                 3,
                 WHITE,
             );
-
         }
     }
 
