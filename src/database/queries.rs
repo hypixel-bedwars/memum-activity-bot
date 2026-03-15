@@ -1139,6 +1139,38 @@ pub async fn insert_stat_delta_in_tx(
     Ok(row.id)
 }
 
+/// Insert a stat delta row and return its ID.
+pub async fn insert_stat_delta(
+    pool: &PgPool,
+    user_id: i64,
+    stat_name: &str,
+    old_value: f64,
+    new_value: f64,
+    delta: f64,
+    source: &str,
+    created_at: &DateTime<Utc>,
+) -> Result<i64, sqlx::Error> {
+    debug!(
+        "queries::insert_stat_delta: user_id={}, stat_name={}, delta={}, source={}",
+        user_id, stat_name, delta, source
+    );
+    let row = sqlx::query_as::<_, DbStatDelta>(
+        "INSERT INTO stat_deltas (user_id, stat_name, old_value, new_value, delta, source, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *",
+    )
+    .bind(user_id)
+    .bind(stat_name)
+    .bind(old_value)
+    .bind(new_value)
+    .bind(delta)
+    .bind(source)
+    .bind(created_at)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.id)
+}
+
 // =========================================================================
 // xp_events
 // =========================================================================
@@ -1847,8 +1879,24 @@ pub async fn award_admin_event_xp(
             .await?;
 
     if active_events.is_empty() {
+        debug!("No active events for guild {}", guild_id);
         return Ok(0.0);
+    } else {
+        debug!(
+            "Found {} active events for guild {}",
+            active_events.len(),
+            guild_id
+        );
     }
+
+    // Insert a stat_delta for this admin action
+    let delta_id = insert_stat_delta(
+        pool, user_id, "admin_xp", 0.0,    // old_value
+        amount, // new_value
+        amount, // delta
+        "admin", now,
+    )
+    .await?;
 
     let mut total_xp = 0.0;
 
@@ -1861,7 +1909,7 @@ pub async fn award_admin_event_xp(
         .bind(event_id)
         .bind(user_id)
         .bind("admin_xp")
-        .bind(0) // dummy delta_id
+        .bind(delta_id)
         .bind(1) // units
         .bind(amount) // xp_per_unit
         .bind(amount) // xp_earned
@@ -1871,6 +1919,8 @@ pub async fn award_admin_event_xp(
 
         total_xp += amount;
     }
+
+    debug!("Awarded {} total event XP for admin action", total_xp);
 
     Ok(total_xp)
 }

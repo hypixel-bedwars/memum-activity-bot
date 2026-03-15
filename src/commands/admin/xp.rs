@@ -53,9 +53,8 @@ pub async fn add(
     queries::increment_xp(pool, db_user.id, amount, &now).await?;
 
     // Award event XP if there are active events
-    let event_xp = award_admin_event_xp(pool, guild_id.get() as i64, db_user.id, amount, &now)
-        .await
-        .unwrap_or(0.0);
+    let event_xp =
+        award_admin_event_xp(pool, guild_id.get() as i64, db_user.id, amount, &now).await?;
 
     let xp_row = queries::get_xp(pool, db_user.id)
         .await?
@@ -132,9 +131,8 @@ pub async fn remove(
     queries::increment_xp(pool, db_user.id, -amount, &now).await?;
 
     // Award event XP if there are active events (negative for remove)
-    let event_xp = award_admin_event_xp(pool, guild_id.get() as i64, db_user.id, -amount, &now)
-        .await
-        .unwrap_or(0.0);
+    let event_xp =
+        award_admin_event_xp(pool, guild_id.get() as i64, db_user.id, -amount, &now).await?;
 
     let xp_row = queries::get_xp(pool, db_user.id)
         .await?
