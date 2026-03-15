@@ -303,6 +303,7 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
             .take(max_milestones)
             .enumerate()
         {
+            // m_level is the milestone level
             let column = i / 4;
             let row = i % 4;
             let x = if column == 0 { col1_x } else { col2_x };
@@ -314,15 +315,15 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
                 ((current_fractional_level / m_level_f) * 100.0)
                     .clamp(0.0, 100.0)
                     .round() as i32
-            } else if let Some((next_m_tuple, _)) = params.milestone_progress.get(i + 1) {
-                let next_m_f = *next_m_tuple as f64;
+            } else if let Some((prev_m_tuple, _)) = params.milestone_progress.get(i - 1) {
+                let prev_m_f = *prev_m_tuple as f64;
 
-                if current_fractional_level >= next_m_f {
+                if current_fractional_level >= m_level_f {
                     100
-                } else if current_fractional_level < m_level_f {
+                } else if current_fractional_level < prev_m_f {
                     0
                 } else {
-                    (((current_fractional_level - m_level_f) / (next_m_f - m_level_f)) * 100.0)
+                    (((current_fractional_level - prev_m_f) / (m_level_f - prev_m_f)) * 100.0)
                         .round() as i32
                 }
             } else {
@@ -427,5 +428,56 @@ fn fill_rounded_rect(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, r: u32
                 }
             }
         }
+    }
+}
+
+
+// Added tests for the milestones because there is not really any easy way to test it 
+#[cfg(test)]
+mod tests {
+    fn compute_fractional_level(level: i32, xp_this: f64, xp_next: f64) -> f64 {
+        let pct = if xp_next > 0.0 {
+            (xp_this / xp_next).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        level as f64 + pct
+    }
+
+    #[test]
+    fn milestone_progress_between_levels() {
+        let milestones = vec![(5, false), (10, false), (15, false)];
+
+        let level = 10;
+        let xp_this = 35.7;
+        let xp_next = 100.0;
+
+        let fractional = compute_fractional_level(level, xp_this, xp_next);
+
+        let mut percentages = Vec::new();
+
+        for (i, (m_level, _)) in milestones.iter().enumerate() {
+            let m_level_f = *m_level as f64;
+
+            let pct = if i == 0 {
+                ((fractional / m_level_f) * 100.0).clamp(0.0, 100.0).round() as i32
+            } else {
+                let prev = milestones[i - 1].0 as f64;
+
+                if fractional >= m_level_f {
+                    100
+                } else if fractional < prev {
+                    0
+                } else {
+                    (((fractional - prev) / (m_level_f - prev)) * 100.0).round() as i32
+                }
+            };
+
+            percentages.push(pct);
+        }
+
+        assert_eq!(percentages[0], 100); // level 5
+        assert_eq!(percentages[1], 100); // level 10
+        assert!(percentages[2] > 0 && percentages[2] < 10); // level 15 ≈ 7%
     }
 }
