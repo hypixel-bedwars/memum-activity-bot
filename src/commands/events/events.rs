@@ -21,6 +21,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::cards::level_card::{self, LevelCardParams};
+use crate::cards::statistics::{self as statistics_card, StatisticsCardParams};
 
 use crate::commands::leaderboard::helpers as lb_helpers;
 use crate::database::queries;
@@ -60,7 +61,7 @@ async fn autocomplete_event_name<'a>(
 #[poise::command(
     slash_command,
     guild_only,
-    subcommands("list", "info", "leaderboard", "level"),
+    subcommands("list", "info", "leaderboard", "level", "statistics"),
     subcommand_required
 )]
 pub async fn event(_ctx: Context<'_>) -> Result<(), Error> {
@@ -391,6 +392,65 @@ pub async fn level(
     info!(
         "Sent event level card for user {} (Discord ID {}) in guild {} for event '{}'",
         author_name, user_id, guild_id, event_name
+    );
+
+    Ok(())
+}
+
+/// Show aggregated statistics for a specific event as a card image.
+#[poise::command(slash_command, guild_only)]
+pub async fn statistics(
+    ctx: Context<'_>,
+    #[description = "Event name (defaults to most recent)"]
+    #[autocomplete = "autocomplete_event_name"]
+    event_name: Option<String>,
+) -> Result<(), Error> {
+    ctx.defer().await?;
+
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+
+    let event_name = match event_name {
+        Some(n) => n,
+        None => queries::get_latest_event_name(&ctx.data().db, guild_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No active or ended events found"))?,
+    };
+
+    let event = match queries::get_event_by_name(&ctx.data().db, guild_id, &event_name).await? {
+        Some(e) => e,
+        None => {
+            let embed = poise::serenity_prelude::CreateEmbed::default()
+                .title("Event Not Found")
+                .color(0xFF4444)
+                .description(format!("Event **{}** was not found.", event_name));
+            ctx.send(poise::CreateReply::default().embed(embed)).await?;
+            return Ok(());
+        }
+    };
+
+    let stats = queries::get_event_statistics(&ctx.data().db, event.id).await?;
+
+    let subtitle = if let Some(participants) = stats.participants {
+        Some(format!("{} participants", participants))
+    } else {
+        None
+    };
+
+    let params = StatisticsCardParams {
+        title: format!("{} — Statistics", event.name),
+        subtitle,
+        stats,
+    };
+
+    let png_bytes = statistics_card::render(&params);
+    let attachment = CreateAttachment::bytes(png_bytes, "event_statistics.png");
+
+    ctx.send(poise::CreateReply::default().attachment(attachment))
+        .await?;
+
+    info!(
+        "Sent event statistics card for guild {} event '{}'",
+        guild_id, event_name
     );
 
     Ok(())

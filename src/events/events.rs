@@ -2,13 +2,18 @@
 // It is a better way for a user to register if they are already verified in the server
 // So i do beleive having the nickanme registration is a good UX improvment
 
+use chrono::{Duration, Utc};
 use poise::serenity_prelude as serenity;
 use tracing::{debug, warn};
 
+use crate::cards::statistics::{self as statistics_card, StatisticsCardParams};
 use crate::commands::events::events as event_cmd;
 use crate::commands::leaderboard::helpers as lb_helpers;
 use crate::commands::leaderboard::leaderboard as lb;
 use crate::commands::registration::register::perform_registration;
+use crate::commands::stats::statistics::{
+    PRESET_RANGES, STATS_RANGE_PREFIX, build_range_components,
+};
 use crate::config::GuildConfig;
 use crate::database::queries;
 use crate::shared::types::{Data, Error};
@@ -29,6 +34,10 @@ pub async fn event_handler(
             } else if component.data.custom_id.starts_with("event_lb_") {
                 if let Err(e) = handle_event_lb_pagination(ctx, component, data).await {
                     tracing::error!(error = %e, "Event leaderboard pagination handler failed");
+                }
+            } else if component.data.custom_id.starts_with(STATS_RANGE_PREFIX) {
+                if let Err(e) = handle_stats_range(ctx, component, data).await {
+                    tracing::error!(error = %e, "Statistics range dropdown handler failed");
                 }
             }
         }
@@ -118,6 +127,104 @@ async fn handle_event_lb_pagination(
             serenity::EditInteractionResponse::new()
                 .new_attachment(attachment)
                 .components(components),
+        )
+        .await?;
+
+    Ok(())
+}
+
+/// Handle the statistics time-range dropdown interaction.
+///
+/// Custom ID format: `stats_range_{guild_id}`
+/// Selected value:   number of days as a string (e.g. `"14"`)
+async fn handle_stats_range(
+    ctx: &serenity::Context,
+    component: &serenity::ComponentInteraction,
+    data: &Data,
+) -> Result<(), Error> {
+    // Parse guild_id from custom_id.
+    let custom_id = &component.data.custom_id;
+    let guild_id_str = match custom_id.strip_prefix(STATS_RANGE_PREFIX) {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+    let guild_id: i64 = match guild_id_str.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            warn!(custom_id, "Stats range: failed to parse guild_id");
+            return Ok(());
+        }
+    };
+
+    // Guard against cross-guild data exposure: verify the parsed guild_id
+    // matches the guild the interaction actually came from.
+    let actual_guild_id = component.guild_id.map(|g| g.get() as i64);
+    if actual_guild_id != Some(guild_id) {
+        warn!(
+            custom_id,
+            ?actual_guild_id,
+            guild_id,
+            "Stats range: custom_id guild_id does not match interaction guild_id"
+        );
+        return Ok(());
+    }
+
+    // Extract selected days from the StringSelect values.
+    let selected_days: i64 = match &component.data.kind {
+        serenity::ComponentInteractionDataKind::StringSelect { values } => {
+            match values.first().and_then(|v| v.parse::<i64>().ok()) {
+                Some(d) => d,
+                None => {
+                    warn!(custom_id, "Stats range: failed to parse selected days");
+                    return Ok(());
+                }
+            }
+        }
+        _ => return Ok(()),
+    };
+
+    // Reject values not in the known preset list — prevents negative durations
+    // and unbounded DB scans from crafted interactions.
+    if !PRESET_RANGES.iter().any(|(d, _)| *d == selected_days) {
+        warn!(
+            custom_id,
+            selected_days, "Stats range: selected days not in preset list"
+        );
+        return Ok(());
+    }
+
+    // Calculate date range.
+    let end_dt = Utc::now();
+    let start_dt = end_dt - Duration::days(selected_days);
+
+    // Determine card subtitle from preset label.
+    let subtitle = PRESET_RANGES
+        .iter()
+        .find(|(days, _)| *days == selected_days)
+        .map(|(_, label)| label.to_string())
+        .unwrap_or_else(|| format!("Last {} Days", selected_days));
+
+    // Fetch updated statistics.
+    let stats = queries::get_guild_statistics_ranged(&data.db, guild_id, start_dt, end_dt).await?;
+    
+    let params = StatisticsCardParams {
+        title: "Server Statistics".to_string(),
+        subtitle: Some(subtitle),
+        stats,
+    };
+
+    let png_bytes = statistics_card::render(&params);
+    let attachment = serenity::CreateAttachment::bytes(png_bytes, "statistics.png");
+    let components = build_range_components(guild_id, selected_days);
+    
+    component
+        .create_response(
+            ctx,
+            serenity::CreateInteractionResponse::UpdateMessage(
+                serenity::CreateInteractionResponseMessage::new()
+                    .add_file(attachment)
+                    .components(components),
+            ),
         )
         .await?;
 

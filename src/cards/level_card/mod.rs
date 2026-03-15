@@ -8,7 +8,7 @@ use image::{DynamicImage, GenericImageView, ImageFormat, Rgba, RgbaImage};
 use tracing::debug;
 
 use crate::font::renderer::FontRenderer;
-use crate::hypixel::models::{HypixelRank, plus_color_to_rgba};
+use crate::hypixel::models::{plus_color_to_rgba, HypixelRank};
 
 // ---------------------------------------------------------------------------
 // Colour constants
@@ -326,11 +326,19 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
                         .round() as i32
                 }
             } else {
-                if params.level >= *m_level { 100 } else { 0 }
+                if params.level >= *m_level {
+                    100
+                } else {
+                    0
+                }
             };
 
             let color = if percentage > 0 {
-                if *reached { GREEN } else { WHITE }
+                if *reached {
+                    GREEN
+                } else {
+                    WHITE
+                }
             } else {
                 MUTED
             };

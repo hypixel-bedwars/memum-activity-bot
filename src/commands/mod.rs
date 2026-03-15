@@ -29,6 +29,7 @@ pub fn all() -> Vec<poise::Command<Data, Error>> {
         registration::send_registration_message::send_registration_message(),
         stats::stats::stats(),
         stats::level::level(),
+        stats::statistics::statistics(),
         admin::set_register_role::set_register_role(),
         admin::set_nickname_registration_role::set_nickname_registration_role(),
         admin::set_nickname_registration_role::clear_nickname_registration_role(),

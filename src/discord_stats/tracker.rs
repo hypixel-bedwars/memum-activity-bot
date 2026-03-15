@@ -22,6 +22,17 @@ pub async fn handle_event(event: &FullEvent, data: &Data) -> Result<(), Error> {
                 return Ok(());
             };
 
+            // Count every non-bot guild message as a raw total (before validation).
+            increment_stat_by(
+                &data.db,
+                data,
+                new_message.author.id.get() as i64,
+                guild_id.get() as i64,
+                "total_messages_raw",
+                1.0,
+            )
+            .await;
+
             if !validate_message(
                 new_message.author.id.get() as i64,
                 &new_message.content,

@@ -228,7 +228,7 @@ pub async fn perform_registration(
         "Inserted Hypixel stat snapshots"
     );
 
-    for stat_name in &["messages_sent", "reactions_added", "commands_used"] {
+    for stat_name in &["messages_sent", "reactions_added", "commands_used", "total_messages_raw"] {
         queries::insert_discord_snapshot(&data.db, db_user.id, stat_name, 0.0, now).await?;
     }
 

@@ -321,11 +321,6 @@ pub async fn update_last_hypixel_refresh(
     Ok(())
 }
 
-/// Record that the user invoked a stat-related command right now.
-///
-/// Called at the start of `/level` and `/stats` so that the background
-/// sweeper can identify recently active users and prioritise their refresh
-/// slot in the next sweep cycle.
 /// Update the Hypixel rank and rank-plus-colour for a user.
 ///
 /// Called from `sweep_hypixel_user` after every successful API fetch so that
@@ -353,6 +348,11 @@ pub async fn update_user_hypixel_rank(
     Ok(())
 }
 
+/// Record that the user invoked a stat-related command right now.
+///
+/// Called at the start of `/level` and `/stats` so that the background
+/// sweeper can identify recently active users and prioritise their refresh
+/// slot in the next sweep cycle.
 pub async fn update_last_command_activity(
     pool: &PgPool,
     user_id: i64,
@@ -2539,4 +2539,231 @@ pub async fn backfill_event_xp(
     );
 
     Ok(summary)
+}
+
+// =========================================================================
+// Statistics aggregates
+// =========================================================================
+
+/// A single named statistic value used in [`GuildStatistics`].
+#[derive(Debug, Clone)]
+pub struct StatisticValue {
+    pub key: String,
+    pub label: String,
+    pub value: f64,
+}
+
+/// Aggregated statistics for a guild or event, used by the statistics card.
+#[derive(Debug, Clone)]
+pub struct GuildStatistics {
+    /// Raw total messages (every non-bot guild message, since rollout).
+    pub total_messages: f64,
+    /// Validated messages (passed spam/length checks).
+    pub valid_messages: f64,
+    /// Total voice chat minutes across all active members.
+    pub total_vc_minutes: f64,
+    /// Total XP held by active members (guild-wide) or earned in event.
+    pub total_xp: f64,
+    /// Number of participants; `Some` only for event statistics.
+    pub participants: Option<i64>,
+    /// Other per-stat totals from `stat_deltas`, sorted descending by value,
+    /// excluding the headline stats handled above.
+    pub other_stat_changes: Vec<StatisticValue>,
+}
+
+/// Compute aggregated guild-wide statistics for a specific time range.
+///
+/// All aggregation is done in SQL for performance. XP within a range is
+/// sourced from `xp_events` (per-delta XP records), while stat totals come
+/// from `stat_deltas` filtered by `created_at`.
+pub async fn get_guild_statistics_ranged(
+    pool: &PgPool,
+    guild_id: i64,
+    start_dt: DateTime<Utc>,
+    end_dt: DateTime<Utc>,
+) -> Result<GuildStatistics, sqlx::Error> {
+    debug!(
+        "queries::get_guild_statistics_ranged: guild_id={}, start={}, end={}",
+        guild_id, start_dt, end_dt
+    );
+
+    // Total XP earned within the time range (from xp_events).
+    let (total_xp,): (f64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(xe.xp_earned), 0)
+         FROM xp_events xe
+         JOIN users u ON u.id = xe.user_id
+         WHERE u.guild_id = $1
+           AND u.active = TRUE
+           AND xe.created_at >= $2
+           AND xe.created_at <= $3",
+    )
+    .bind(guild_id)
+    .bind(start_dt)
+    .bind(end_dt)
+    .fetch_one(pool)
+    .await?;
+
+    // Per-stat delta sums within the time range.
+    let rows: Vec<(String, f64)> = sqlx::query_as(
+        "SELECT sd.stat_name, COALESCE(SUM(sd.delta), 0)
+         FROM stat_deltas sd
+         JOIN users u ON u.id = sd.user_id
+         WHERE u.guild_id = $1
+           AND u.active = TRUE
+           AND sd.delta > 0
+           AND sd.created_at >= $2
+           AND sd.created_at <= $3
+         GROUP BY sd.stat_name
+         ORDER BY SUM(sd.delta) DESC",
+    )
+    .bind(guild_id)
+    .bind(start_dt)
+    .bind(end_dt)
+    .fetch_all(pool)
+    .await?;
+
+    let mut total_messages = 0.0_f64;
+    let mut valid_messages = 0.0_f64;
+    let mut total_vc_minutes = 0.0_f64;
+    let mut other_stat_changes: Vec<StatisticValue> = Vec::new();
+
+    for (key, value) in rows {
+        match key.as_str() {
+            "total_messages_raw" => total_messages = value,
+            "messages_sent" => valid_messages = value,
+            "voice_minutes" => total_vc_minutes = value,
+            _ => {
+                use crate::utils::stats_definitions::display_name_for_key;
+                let label = display_name_for_key(&key);
+                other_stat_changes.push(StatisticValue { key, label, value });
+            }
+        }
+    }
+
+    Ok(GuildStatistics {
+        total_messages,
+        valid_messages,
+        total_vc_minutes,
+        total_xp,
+        participants: None,
+        other_stat_changes,
+    })
+}
+
+/// Compute aggregated guild-wide statistics across all active members.
+pub async fn get_guild_statistics(
+    pool: &PgPool,
+    guild_id: i64,
+) -> Result<GuildStatistics, sqlx::Error> {
+    debug!("queries::get_guild_statistics: guild_id={}", guild_id);
+
+    // Total XP held by active members.
+    let (total_xp,): (f64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(x.total_xp), 0)
+         FROM xp x
+         JOIN users u ON u.id = x.user_id
+         WHERE u.guild_id = $1 AND u.active = TRUE",
+    )
+    .bind(guild_id)
+    .fetch_one(pool)
+    .await?;
+
+    // Per-stat delta sums for all active members.
+    let rows: Vec<(String, f64)> = sqlx::query_as(
+        "SELECT sd.stat_name, COALESCE(SUM(sd.delta), 0)
+         FROM stat_deltas sd
+         JOIN users u ON u.id = sd.user_id
+         WHERE u.guild_id = $1 AND u.active = TRUE AND sd.delta > 0
+         GROUP BY sd.stat_name
+         ORDER BY SUM(sd.delta) DESC",
+    )
+    .bind(guild_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut total_messages = 0.0_f64;
+    let mut valid_messages = 0.0_f64;
+    let mut total_vc_minutes = 0.0_f64;
+    let mut other_stat_changes: Vec<StatisticValue> = Vec::new();
+
+    for (key, value) in rows {
+        match key.as_str() {
+            "total_messages_raw" => total_messages = value,
+            "messages_sent" => valid_messages = value,
+            "voice_minutes" => total_vc_minutes = value,
+            _ => {
+                use crate::utils::stats_definitions::display_name_for_key;
+                let label = display_name_for_key(&key);
+                other_stat_changes.push(StatisticValue { key, label, value });
+            }
+        }
+    }
+
+    // other_stat_changes already sorted desc by the ORDER BY clause.
+
+    Ok(GuildStatistics {
+        total_messages,
+        valid_messages,
+        total_vc_minutes,
+        total_xp,
+        participants: None,
+        other_stat_changes,
+    })
+}
+
+/// Compute aggregated statistics for a specific event.
+pub async fn get_event_statistics(
+    pool: &PgPool,
+    event_id: i64,
+) -> Result<GuildStatistics, sqlx::Error> {
+    debug!("queries::get_event_statistics: event_id={}", event_id);
+
+    // Total XP earned within this event.
+    let (total_xp,): (f64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(xp_earned), 0) FROM event_xp WHERE event_id = $1",
+    )
+    .bind(event_id)
+    .fetch_one(pool)
+    .await?;
+
+    // Per-stat unit totals for this event.
+    let rows: Vec<(String, f64)> = sqlx::query_as(
+        "SELECT stat_name, COALESCE(SUM(units), 0)
+         FROM event_xp
+         WHERE event_id = $1
+         GROUP BY stat_name
+         ORDER BY SUM(units) DESC",
+    )
+    .bind(event_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut total_messages = 0.0_f64;
+    let mut valid_messages = 0.0_f64;
+    let mut total_vc_minutes = 0.0_f64;
+    let mut other_stat_changes: Vec<StatisticValue> = Vec::new();
+
+    for (key, value) in rows {
+        match key.as_str() {
+            "total_messages_raw" => total_messages = value,
+            "messages_sent" => valid_messages = value,
+            "voice_minutes" => total_vc_minutes = value,
+            _ => {
+                use crate::utils::stats_definitions::display_name_for_key;
+                let label = display_name_for_key(&key);
+                other_stat_changes.push(StatisticValue { key, label, value });
+            }
+        }
+    }
+
+    let participants = count_event_participants(pool, event_id).await?;
+
+    Ok(GuildStatistics {
+        total_messages,
+        valid_messages,
+        total_vc_minutes,
+        total_xp,
+        participants: Some(participants),
+        other_stat_changes,
+    })
 }
