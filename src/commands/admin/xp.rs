@@ -11,6 +11,9 @@ use crate::database::queries;
 use crate::shared::types::{Context, Error};
 use crate::xp::calculator;
 
+/// Import the award_admin_event_xp function
+use crate::database::queries::award_admin_event_xp;
+
 /// Parent command
 #[poise::command(
     slash_command,
@@ -49,6 +52,11 @@ pub async fn add(
     // Update XP
     queries::increment_xp(pool, db_user.id, amount, &now).await?;
 
+    // Award event XP if there are active events
+    let event_xp = award_admin_event_xp(pool, guild_id.get() as i64, db_user.id, amount, &now)
+        .await
+        .unwrap_or(0.0);
+
     let xp_row = queries::get_xp(pool, db_user.id)
         .await?
         .ok_or("XP row missing")?;
@@ -66,8 +74,8 @@ pub async fn add(
     let embed = CreateEmbed::default()
         .title("XP Added")
         .description(format!(
-            "Added **{} XP** to <@{}>\nNew total XP: **{}**",
-            amount, user.id, xp_row.total_xp
+            "Added **{} XP** to <@{}>\nNew total XP: **{}**\nEvent XP awarded: **{}**",
+            amount, user.id, xp_row.total_xp, event_xp
         ))
         .color(0x00FFAA);
 
@@ -123,6 +131,11 @@ pub async fn remove(
 
     queries::increment_xp(pool, db_user.id, -amount, &now).await?;
 
+    // Award event XP if there are active events (negative for remove)
+    let event_xp = award_admin_event_xp(pool, guild_id.get() as i64, db_user.id, -amount, &now)
+        .await
+        .unwrap_or(0.0);
+
     let xp_row = queries::get_xp(pool, db_user.id)
         .await?
         .ok_or("XP row missing")?;
@@ -140,8 +153,8 @@ pub async fn remove(
     let embed = CreateEmbed::default()
         .title("XP Removed")
         .description(format!(
-            "Removed **{} XP** from <@{}>\nNew total XP: **{}**",
-            amount, user.id, xp_row.total_xp
+            "Removed **{} XP** from <@{}>\nNew total XP: **{}**\nEvent XP adjusted: **{}**",
+            amount, user.id, xp_row.total_xp, event_xp
         ))
         .color(0xFF5555);
 

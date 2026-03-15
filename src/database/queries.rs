@@ -1823,6 +1823,58 @@ pub async fn award_event_xp_for_delta(
     Ok(total_xp)
 }
 
+/// Award admin XP to all active events for a guild.
+///
+/// This is used when admins manually add or remove XP via `/xp add` or `/xp remove`.
+/// It adds the specified amount to the user's event XP for every active event in the guild.
+pub async fn award_admin_event_xp(
+    pool: &PgPool,
+    guild_id: i64,
+    user_id: i64,
+    amount: f64,
+    now: &DateTime<Utc>,
+) -> Result<f64, sqlx::Error> {
+    debug!(
+        "queries::award_admin_event_xp: guild_id={}, user_id={}, amount={}",
+        guild_id, user_id, amount
+    );
+
+    // Find all active events for this guild.
+    let active_events: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM events WHERE guild_id = $1 AND status = 'active'")
+            .bind(guild_id)
+            .fetch_all(pool)
+            .await?;
+
+    if active_events.is_empty() {
+        return Ok(0.0);
+    }
+
+    let mut total_xp = 0.0;
+
+    for event_id in &active_events {
+        sqlx::query(
+            "INSERT INTO event_xp
+                 (event_id, user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(event_id)
+        .bind(user_id)
+        .bind("admin_xp")
+        .bind(0) // dummy delta_id
+        .bind(1) // units
+        .bind(amount) // xp_per_unit
+        .bind(amount) // xp_earned
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        total_xp += amount;
+    }
+
+    Ok(total_xp)
+}
+
 /// Return the event leaderboard for a given event (top N users by total event XP).
 pub async fn get_event_leaderboard(
     pool: &PgPool,
