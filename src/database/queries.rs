@@ -2721,10 +2721,12 @@ pub async fn get_event_milestones_with_counts(
                 COUNT(sub.user_id) AS user_count
          FROM event_milestones em
          LEFT JOIN (
-             SELECT user_id, SUM(xp_earned) AS total_xp
-             FROM event_xp
-             WHERE event_id = $1
-             GROUP BY user_id
+             SELECT ex.user_id, SUM(ex.xp_earned) AS total_xp
+             FROM event_xp ex
+             JOIN users u ON u.id = ex.user_id
+             WHERE ex.event_id = $1
+               AND u.active = TRUE
+             GROUP BY ex.user_id
          ) sub ON sub.total_xp >= em.xp_threshold
          WHERE em.event_id = $1
          GROUP BY em.id

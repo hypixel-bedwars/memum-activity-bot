@@ -149,7 +149,8 @@ async fn autocomplete_event_stat<'a>(
         "backfill",
         "status",
         "milestones_add",
-        "milestones_remove"
+        "milestones_remove",
+        "leaderboard_remove"
     )
 )]
 pub async fn edit_event(_ctx: Context<'_>) -> Result<(), Error> {
@@ -811,6 +812,156 @@ pub async fn backfill(
             ctx.say(format!("Backfill failed: {e}")).await?;
         }
     }
+
+    Ok(())
+}
+
+/// Autocomplete for event names that currently have a persistent leaderboard.
+async fn autocomplete_persisted_event_name<'a>(
+    ctx: Context<'_>,
+    partial: &'a str,
+) -> Vec<serenity::AutocompleteChoice> {
+    let guild_id = match ctx.guild_id() {
+        Some(id) => id.get() as i64,
+        None => return Vec::new(),
+    };
+
+    // Fetch all persistent event leaderboard records for this guild.
+    let records = match queries::get_all_persistent_event_leaderboards(&ctx.data().db).await {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    let partial_lower = partial.to_lowercase();
+    let mut choices = Vec::new();
+
+    for record in records.iter().filter(|r| r.guild_id == guild_id) {
+        let event =
+            match queries::get_event_by_id(&ctx.data().db, record.event_id).await {
+                Ok(Some(e)) => e,
+                _ => continue,
+            };
+
+        if event.name.to_lowercase().contains(&partial_lower) {
+            let label = format!("{} [{}] — <#{}>", event.name, event.status, record.channel_id);
+            choices.push(serenity::AutocompleteChoice::new(label, event.name));
+        }
+
+        if choices.len() >= 25 {
+            break;
+        }
+    }
+
+    choices
+}
+
+/// Remove a persistent event leaderboard and delete its Discord messages.
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    rename = "leaderboard-remove",
+    check = "crate::utils::permissions::admin_check"
+)]
+pub async fn leaderboard_remove(
+    ctx: Context<'_>,
+    #[description = "Event whose persistent leaderboard should be removed"]
+    #[autocomplete = "autocomplete_persisted_event_name"]
+    event_name: String,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
+    let guild_id = ctx
+        .guild_id()
+        .ok_or("This command can only be used in a server")?
+        .get() as i64;
+    let data = ctx.data();
+
+    let event = match queries::get_event_by_name(&data.db, guild_id, &event_name).await? {
+        Some(e) => e,
+        None => {
+            ctx.say(format!("Event **{event_name}** not found.")).await?;
+            return Ok(());
+        }
+    };
+
+    let existing =
+        match queries::get_persistent_event_leaderboard(&data.db, event.id).await? {
+            Some(r) => r,
+            None => {
+                ctx.say(format!(
+                    "No persistent leaderboard exists for **{event_name}**."
+                ))
+                .await?;
+                return Ok(());
+            }
+        };
+
+    let channel = serenity::ChannelId::new(existing.channel_id as u64);
+
+    // Delete leaderboard page messages.
+    let msg_ids: Vec<u64> =
+        serde_json::from_value(existing.message_ids.clone()).unwrap_or_default();
+    for msg_id in msg_ids {
+        let _ = channel
+            .delete_message(&ctx.http(), serenity::MessageId::new(msg_id))
+            .await;
+    }
+
+    // Delete status message.
+    if existing.status_message_id != 0 {
+        let _ = channel
+            .delete_message(
+                &ctx.http(),
+                serenity::MessageId::new(existing.status_message_id as u64),
+            )
+            .await;
+    }
+
+    // Delete milestone card message.
+    if existing.milestone_message_id != 0 {
+        let _ = channel
+            .delete_message(
+                &ctx.http(),
+                serenity::MessageId::new(existing.milestone_message_id as u64),
+            )
+            .await;
+    }
+
+    // Remove database record.
+    queries::delete_persistent_event_leaderboard(&data.db, event.id).await?;
+
+    ctx.send(
+        poise::CreateReply::default().ephemeral(true).embed(
+            CreateEmbed::new()
+                .title("Persistent Event Leaderboard Removed")
+                .color(0xFF4444)
+                .field("Event", &event.name, true)
+                .field("Channel", format!("<#{}>", existing.channel_id), true),
+        ),
+    )
+    .await?;
+
+    info!(
+        event_id = event.id,
+        guild_id,
+        channel_id = existing.channel_id,
+        "Removed persistent event leaderboard."
+    );
+
+    logger(
+        ctx.serenity_context(),
+        data,
+        ctx.guild_id().unwrap(),
+        LogType::Info,
+        format!(
+            "{} removed the persistent event leaderboard for **{}** from <#{}>",
+            ctx.author().name,
+            event.name,
+            existing.channel_id,
+        ),
+    )
+    .await?;
 
     Ok(())
 }
