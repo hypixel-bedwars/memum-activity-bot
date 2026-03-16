@@ -28,26 +28,19 @@ pub async fn send_registration_message(
             "Link your **Minecraft account** to start earning **XP** and tracking your stats on this server."
         )
         .field(
-            "📝 Step 1 — Register Your Minecraft Username",
-            "Run the following command:\n\
-            `/register <your_minecraft_username>`",
-            false,
-        )
-        .field(
-            "🔗 Step 2 — Link Your Discord on Hypixel",
-            "Your **Hypixel profile** must have your Discord set as a social link.\n\n\
-            **In-game command:**\n\
-            `/socials discord <your_discord_tag>`",
+            "📝 Step 1 — Link Your Discord in Hypixel",
+            "If yoo have already linked your account you can skip this\n\
+             If you have not linked your account follow this [video guide](https://youtu.be/UresIQdoQHk?si=vwo1WoeSdWP2xPE9) ",
             false,
         )
         .field(
             "✅ Final Step",
-            "Once both steps are completed, press the **Register** button below.\n\
+            "Once that step is completed, press the **Register** button below.\n\
             The bot will verify your account and finish the registration process.",
             false,
         )
         .footer(serenity::CreateEmbedFooter::new(
-            "Your Minecraft username must match the one you used with /register.",
+            "Please make sure you have a nickname that has not been modified",
         ));
 
     let message = serenity::CreateMessage::new().embed(embed).components(vec![
