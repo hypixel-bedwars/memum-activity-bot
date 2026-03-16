@@ -10,6 +10,7 @@ use crate::cards::statistics::{self as statistics_card, StatisticsCardParams};
 use crate::commands::events::events as event_cmd;
 use crate::commands::leaderboard::helpers as lb_helpers;
 use crate::commands::leaderboard::leaderboard as lb;
+use crate::commands::logger::logger::{logger, LogType};
 use crate::commands::registration::register::perform_registration;
 use crate::commands::stats::statistics::{
     PRESET_RANGES, STATS_RANGE_PREFIX, build_range_components,
@@ -286,6 +287,7 @@ async fn handle_register_button(
                 "A database error occurred. Please try again.",
             )
             .await?;
+            logger(ctx, data, guild_id, LogType::Error, format!("DB error during register button press for user {discord_id}: {e}")).await?;
             return Ok(());
         }
     };

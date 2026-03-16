@@ -55,10 +55,11 @@ pub async fn set_guild_log_channel(
     Ok(())
 }
 
-/// Retrieve the configured logging channel for a guild, if any.
 /// Retrieve all guild IDs that have a logging channel configured.
-/// Used by background sweepers to broadcast log messages to every
-/// guild that has opted in to logging.
+///
+/// Used by background sweepers to broadcast log messages to every guild that
+/// has opted in to logging. Prefer [`get_all_guild_log_channels`] when the
+/// channel ID is also needed (avoids a follow-up per-guild query).
 pub async fn get_guilds_with_log_channel(pool: &PgPool) -> Result<Vec<i64>, sqlx::Error> {
     debug!("queries::get_guilds_with_log_channel");
 
@@ -68,6 +69,27 @@ pub async fn get_guilds_with_log_channel(pool: &PgPool) -> Result<Vec<i64>, sqlx
             .await?;
 
     Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// Retrieve all `(guild_id, channel_id)` pairs for guilds that have a logging
+/// channel configured.
+///
+/// Preferred over [`get_guilds_with_log_channel`] when the channel ID is
+/// needed immediately, because it fetches both in a single query (no N+1).
+/// Used by the Discord log worker in `logging.rs` and by `broadcast_log` in
+/// `daily_snapshot.rs`.
+pub async fn get_all_guild_log_channels(
+    pool: &PgPool,
+) -> Result<Vec<(i64, i64)>, sqlx::Error> {
+    debug!("queries::get_all_guild_log_channels");
+
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT guild_id, log_channel_id FROM guilds WHERE log_channel_id IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
 }
 
 pub async fn get_guild_log_channel(

@@ -15,7 +15,8 @@ serde_json = "1.0"
 sqlx = { version = "0.8", features = [ "postgres", "runtime-tokio-rustls", "macros", "chrono", "uuid", "json"] }
 tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "registry", "ansi"] }
+tracing-appender = "0.2"
 time = { version = "0.3", features = ["serde", "serde-well-known", "formatting", "macros"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = { version = "0.24", default-features = false }

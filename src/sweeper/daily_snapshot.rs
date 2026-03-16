@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
+use poise::serenity_prelude as serenity;
 use tracing::{error, info};
 
-use crate::commands::logger::logger::{LogType, logger_system};
+use crate::commands::logger::logger::LogType;
 use crate::database::queries;
 use crate::shared::types::Data;
 
@@ -68,25 +69,43 @@ pub async fn start_daily_snapshot_loop(data: Arc<Data>) {
 }
 
 /// Send a log message to every guild that has a logging channel configured.
-/// Any failure is only traced — it never aborts the snapshot loop.
+///
+/// Uses a single query to fetch all `(guild_id, channel_id)` pairs, then posts
+/// directly — no N+1 query per guild. Any failure is only traced locally; it
+/// never aborts the snapshot loop.
 async fn broadcast_log(data: &Data, log_type: LogType, msg: String) {
-    let guild_ids = match queries::get_guilds_with_log_channel(&data.db).await {
-        Ok(ids) => ids,
+    let guild_channels = match queries::get_all_guild_log_channels(&data.db).await {
+        Ok(pairs) => pairs,
         Err(e) => {
-            error!(error = %e, "Failed to fetch guilds for daily snapshot log.");
+            error!(error = %e, "Failed to fetch guild log channels for daily snapshot broadcast.");
             return;
         }
     };
 
-    for guild_id in guild_ids {
-        // Re-create the variant each iteration since LogType is not Copy.
-        let lt = match log_type {
-            LogType::Info => LogType::Info,
-            LogType::Warn => LogType::Warn,
-            LogType::Error => LogType::Error,
-            LogType::Debug => LogType::Debug,
+    for (_guild_id, channel_id) in guild_channels {
+        // Build embed inside the loop — CreateEmbed is cheap to construct.
+        let embed = match &log_type {
+            LogType::Info => serenity::CreateEmbed::new()
+                .title("ℹ️ Info")
+                .description(&msg)
+                .color(0x3498db_u32),
+            LogType::Warn => serenity::CreateEmbed::new()
+                .title("⚠️ Warning")
+                .description(&msg)
+                .color(0xf1c40f_u32),
+            LogType::Error => serenity::CreateEmbed::new()
+                .title("❌ Error")
+                .description(&msg)
+                .color(0xe74c3c_u32),
+            LogType::Debug => serenity::CreateEmbed::new()
+                .title("🐛 Debug")
+                .description(&msg)
+                .color(0x95a5a6_u32),
         };
 
-        logger_system(&data.http, &data.db, guild_id, lt, msg.clone()).await;
+        let channel = serenity::ChannelId::new(channel_id as u64);
+        let _ = channel
+            .send_message(&data.http, serenity::CreateMessage::new().embed(embed))
+            .await;
     }
 }
