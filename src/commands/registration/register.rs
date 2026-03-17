@@ -177,6 +177,15 @@ pub async fn perform_registration(
             ));
         }
 
+        let mut reset_notice = String::new();
+        if existing_user.minecraft_uuid != profile.id {
+            // Wipe stats for this user
+            queries::wipe_user_stats(&data.db, existing_user.id).await?;
+
+            reset_notice =
+                "Your stats have been reset due to switching Minecraft accounts.\n".to_string();
+        }
+
         debug!(
             guild_id = guild_id_i64,
             discord_user_id,
@@ -225,14 +234,21 @@ pub async fn perform_registration(
             "User re-registered"
         );
 
-        return Ok((
+        let message = if reset_notice.is_empty() {
             format!(
                 "Welcome back — you have been re-registered as **{}** (UUID `{}`). \
-                Your previous stats have been preserved and tracking is now active again.",
+                Tracking is now active again.",
                 profile.name, profile.id
-            ),
-            Some((db_user.id, profile.id)),
-        ));
+            )
+        } else {
+            format!(
+                "{}You have been registered as **{}** (UUID `{}`). \
+                Tracking has restarted.",
+                reset_notice, profile.name, profile.id
+            )
+        };
+
+        return Ok((message, Some((db_user.id, profile.id))));
     }
 
     let role = serenity::RoleId::new(role_id);

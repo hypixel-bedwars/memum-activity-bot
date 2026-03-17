@@ -269,6 +269,32 @@ pub async fn get_first_discord_snapshot(
     .await
 }
 
+pub async fn wipe_user_stats(pool: &PgPool, user_id: i64) -> Result<(), sqlx::Error> {
+    debug!(user_id, "Wiping all user stats");
+    let mut tx = pool.begin().await?;
+
+    // Delete in order (children → parents to avoid FK issues)
+    sqlx::query(
+        r#"
+        DELETE FROM stat_deltas              WHERE user_id = $1;
+        DELETE FROM xp_events                WHERE user_id = $1;
+        DELETE FROM event_xp                 WHERE user_id = $1;
+        DELETE FROM daily_snapshots          WHERE user_id = $1;
+        DELETE FROM sweep_cursor             WHERE user_id = $1;
+        DELETE FROM hypixel_stats_snapshot   WHERE user_id = $1;
+        DELETE FROM discord_stats_snapshot   WHERE user_id = $1;
+        DELETE FROM xp                       WHERE user_id = $1;
+        "#,
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(())
+}
+
 /// Look up an *active* user by Discord ID within a specific guild.
 ///
 /// Inactive users are preserved for historical stats, but should be ignored by
