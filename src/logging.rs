@@ -115,7 +115,11 @@ struct DiscordLayer {
 }
 
 impl<S: tracing::Subscriber> Layer<S> for DiscordLayer {
-    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
         let meta = event.metadata();
 
         // Only forward ERROR and WARN — debug/info are too noisy for Discord.
@@ -271,11 +275,7 @@ pub fn install_panic_hook() {
 /// Errors that occur inside this worker are sent to console + file via
 /// `tracing::error!`. Because [`DiscordLayer`] filters out events from
 /// `memum_activity_bot::logging`, these errors will not re-enter the channel.
-pub async fn discord_log_worker(
-    mut rx: DiscordLogReceiver,
-    pool: sqlx::PgPool,
-    http: Arc<Http>,
-) {
+pub async fn discord_log_worker(mut rx: DiscordLogReceiver, pool: sqlx::PgPool, http: Arc<Http>) {
     tracing::info!("Discord log worker started.");
 
     while let Some(entry) = rx.recv().await {

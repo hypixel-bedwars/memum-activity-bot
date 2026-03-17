@@ -78,9 +78,7 @@ pub async fn get_guilds_with_log_channel(pool: &PgPool) -> Result<Vec<i64>, sqlx
 /// needed immediately, because it fetches both in a single query (no N+1).
 /// Used by the Discord log worker in `logging.rs` and by `broadcast_log` in
 /// `daily_snapshot.rs`.
-pub async fn get_all_guild_log_channels(
-    pool: &PgPool,
-) -> Result<Vec<(i64, i64)>, sqlx::Error> {
+pub async fn get_all_guild_log_channels(pool: &PgPool) -> Result<Vec<(i64, i64)>, sqlx::Error> {
     debug!("queries::get_all_guild_log_channels");
 
     let rows: Vec<(i64, i64)> = sqlx::query_as(

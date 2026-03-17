@@ -504,10 +504,13 @@ pub async fn milestones(
 
     // Build one field per milestone (cap at Discord's 25-field limit).
     for milestone in milestones.iter().take(25) {
-        let completers =
-            queries::get_event_milestone_completers(&ctx.data().db, event.id, milestone.xp_threshold)
-                .await
-                .unwrap_or_default();
+        let completers = queries::get_event_milestone_completers(
+            &ctx.data().db,
+            event.id,
+            milestone.xp_threshold,
+        )
+        .await
+        .unwrap_or_default();
 
         let count = completers.len();
         let field_name = format!("{} XP", milestone.xp_threshold as i64);

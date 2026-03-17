@@ -836,14 +836,16 @@ async fn autocomplete_persisted_event_name<'a>(
     let mut choices = Vec::new();
 
     for record in records.iter().filter(|r| r.guild_id == guild_id) {
-        let event =
-            match queries::get_event_by_id(&ctx.data().db, record.event_id).await {
-                Ok(Some(e)) => e,
-                _ => continue,
-            };
+        let event = match queries::get_event_by_id(&ctx.data().db, record.event_id).await {
+            Ok(Some(e)) => e,
+            _ => continue,
+        };
 
         if event.name.to_lowercase().contains(&partial_lower) {
-            let label = format!("{} [{}] — <#{}>", event.name, event.status, record.channel_id);
+            let label = format!(
+                "{} [{}] — <#{}>",
+                event.name, event.status, record.channel_id
+            );
             choices.push(serenity::AutocompleteChoice::new(label, event.name));
         }
 
@@ -880,22 +882,22 @@ pub async fn leaderboard_remove(
     let event = match queries::get_event_by_name(&data.db, guild_id, &event_name).await? {
         Some(e) => e,
         None => {
-            ctx.say(format!("Event **{event_name}** not found.")).await?;
+            ctx.say(format!("Event **{event_name}** not found."))
+                .await?;
             return Ok(());
         }
     };
 
-    let existing =
-        match queries::get_persistent_event_leaderboard(&data.db, event.id).await? {
-            Some(r) => r,
-            None => {
-                ctx.say(format!(
-                    "No persistent leaderboard exists for **{event_name}**."
-                ))
-                .await?;
-                return Ok(());
-            }
-        };
+    let existing = match queries::get_persistent_event_leaderboard(&data.db, event.id).await? {
+        Some(r) => r,
+        None => {
+            ctx.say(format!(
+                "No persistent leaderboard exists for **{event_name}**."
+            ))
+            .await?;
+            return Ok(());
+        }
+    };
 
     let channel = serenity::ChannelId::new(existing.channel_id as u64);
 
@@ -1189,30 +1191,32 @@ pub async fn persist(
     }
 
     // Post milestone card if milestones exist for this event (before status message).
-    let milestone_message_id: i64 =
-        match lb_helpers::generate_event_milestone_card(&ctx.data().db, event.id, &event.name)
-            .await
-        {
-            Ok(Some(bytes)) => {
-                let attachment =
-                    CreateAttachment::bytes(bytes, "event_milestones.png");
-                match channel
-                    .send_message(&ctx.http(), CreateMessage::new().add_file(attachment))
-                    .await
-                {
-                    Ok(msg) => msg.id.get() as i64,
-                    Err(e) => {
-                        error!(event_id = event.id, error = %e, "Failed to post event milestone card.");
-                        0
-                    }
+    let milestone_message_id: i64 = match lb_helpers::generate_event_milestone_card(
+        &ctx.data().db,
+        event.id,
+        &event.name,
+    )
+    .await
+    {
+        Ok(Some(bytes)) => {
+            let attachment = CreateAttachment::bytes(bytes, "event_milestones.png");
+            match channel
+                .send_message(&ctx.http(), CreateMessage::new().add_file(attachment))
+                .await
+            {
+                Ok(msg) => msg.id.get() as i64,
+                Err(e) => {
+                    error!(event_id = event.id, error = %e, "Failed to post event milestone card.");
+                    0
                 }
             }
-            Ok(None) => 0,
-            Err(e) => {
-                error!(event_id = event.id, error = %e, "Failed to generate event milestone card.");
-                0
-            }
-        };
+        }
+        Ok(None) => 0,
+        Err(e) => {
+            error!(event_id = event.id, error = %e, "Failed to generate event milestone card.");
+            0
+        }
+    };
 
     // Post status / last-updated message (always last, so it sits at the bottom).
     let unix_time = time::OffsetDateTime::now_utc().unix_timestamp();
@@ -1583,7 +1587,8 @@ pub async fn milestones_add(
     let event = match queries::get_event_by_name(&data.db, guild_id, &event_name).await? {
         Some(e) => e,
         None => {
-            ctx.say(format!("Event **{event_name}** not found.")).await?;
+            ctx.say(format!("Event **{event_name}** not found."))
+                .await?;
             return Ok(());
         }
     };
@@ -1668,7 +1673,8 @@ pub async fn milestones_remove(
     let event = match queries::get_event_by_name(&data.db, guild_id, &event_name).await? {
         Some(e) => e,
         None => {
-            ctx.say(format!("Event **{event_name}** not found.")).await?;
+            ctx.say(format!("Event **{event_name}** not found."))
+                .await?;
             return Ok(());
         }
     };

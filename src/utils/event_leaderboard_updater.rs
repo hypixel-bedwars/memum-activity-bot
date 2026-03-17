@@ -228,8 +228,7 @@ async fn update_single_event_leaderboard(
     if record.milestone_message_id != 0 {
         match helpers::generate_event_milestone_card(pool, record.event_id, &event.name).await {
             Ok(Some(bytes)) => {
-                let attachment =
-                    CreateAttachment::bytes(bytes, "event_milestones.png");
+                let attachment = CreateAttachment::bytes(bytes, "event_milestones.png");
                 let edit = EditMessage::new().new_attachment(attachment);
                 if let Err(e) = channel
                     .edit_message(

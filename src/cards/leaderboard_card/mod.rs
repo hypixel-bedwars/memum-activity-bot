@@ -9,7 +9,7 @@ use image::{DynamicImage, GenericImageView, ImageFormat, Rgba, RgbaImage};
 use tracing::debug;
 
 use crate::font::renderer::FontRenderer;
-use crate::hypixel::models::{plus_color_to_rgba, HypixelRank};
+use crate::hypixel::models::{HypixelRank, plus_color_to_rgba};
 
 // ---------------------------------------------------------------------------
 // Colour constants

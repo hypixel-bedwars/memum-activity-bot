@@ -167,7 +167,11 @@ pub async fn perform_registration(
                 format!(
                     "You are already registered as **{}** (UUID `{}`). \
                 If you want to change your linked Minecraft account, please unregister first with `/unregister`.",
-                    existing_user.minecraft_username.as_deref().unwrap_or("unknown"), existing_user.minecraft_uuid
+                    existing_user
+                        .minecraft_username
+                        .as_deref()
+                        .unwrap_or("unknown"),
+                    existing_user.minecraft_uuid
                 ),
                 None,
             ));

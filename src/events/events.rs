@@ -10,7 +10,7 @@ use crate::cards::statistics::{self as statistics_card, StatisticsCardParams};
 use crate::commands::events::events as event_cmd;
 use crate::commands::leaderboard::helpers as lb_helpers;
 use crate::commands::leaderboard::leaderboard as lb;
-use crate::commands::logger::logger::{logger, LogType};
+use crate::commands::logger::logger::{LogType, logger};
 use crate::commands::registration::register::perform_registration;
 use crate::commands::stats::statistics::{
     PRESET_RANGES, STATS_RANGE_PREFIX, build_range_components,
@@ -90,16 +90,6 @@ async fn handle_event_lb_pagination(
         }
     };
 
-    // Defer the update so Discord doesn't show a loading spinner.
-    component
-        .create_response(
-            ctx,
-            serenity::CreateInteractionResponse::Defer(
-                serenity::CreateInteractionResponseMessage::new(),
-            ),
-        )
-        .await?;
-
     // Load event details.
     let event = match queries::get_event_by_id(&data.db, event_id).await? {
         Some(e) => e,
@@ -121,6 +111,16 @@ async fn handle_event_lb_pagination(
 
     let attachment = serenity::CreateAttachment::bytes(png_bytes, "event_leaderboard.png");
     let components = event_cmd::event_lb_pagination_buttons(event_id, page, total_pages);
+
+    // Defer the update so Discord doesn't show a loading spinner.
+    component
+        .create_response(
+            ctx,
+            serenity::CreateInteractionResponse::Defer(
+                serenity::CreateInteractionResponseMessage::new(),
+            ),
+        )
+        .await?;
 
     component
         .edit_response(
@@ -287,7 +287,14 @@ async fn handle_register_button(
                 "A database error occurred. Please try again.",
             )
             .await?;
-            logger(ctx, data, guild_id, LogType::Error, format!("DB error during register button press for user {discord_id}: {e}")).await?;
+            logger(
+                ctx,
+                data,
+                guild_id,
+                LogType::Error,
+                format!("DB error during register button press for user {discord_id}: {e}"),
+            )
+            .await?;
             return Ok(());
         }
     };

@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: rustfmt
+        name: rustfmt
+        description: Format Rust code
+        entry: cargo fmt --all -- --color always
+        language: system
+        pass_filenames: false

@@ -1,7 +1,10 @@
 [package]
 name = "memum-activity-bot"
+description = "Trackes hypixel and discord stats for the BWD server"
+authors = ["VA80"]
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
 
 [dependencies]
 anyhow = "1.0"
