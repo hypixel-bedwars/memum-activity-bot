@@ -47,7 +47,8 @@ pub async fn set_register_role(
     );
     let config_json = serde_json::to_value(&guild_config)?;
     queries::update_guild_config(&data.db, guild_id_i64, config_json).await?;
-    data.guild_configs.insert(guild_id_i64, guild_config);
+    data.guild_configs
+        .insert(guild_id_i64, (guild_config, std::time::Instant::now()));
 
     let embed = CreateEmbed::default()
         .title("Registration Role Updated")

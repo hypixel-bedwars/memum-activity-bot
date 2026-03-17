@@ -116,29 +116,29 @@ pub async fn stats(
             let latest = queries::get_latest_discord_snapshot(&data.db, db_user.id, key)
                 .await?
                 .map(|s| s.stat_value)
-                .unwrap_or(0.0);
+                .unwrap_or(0);
 
             let initial = queries::get_first_discord_snapshot(&data.db, db_user.id, key)
                 .await?
                 .map(|s| s.stat_value)
-                .unwrap_or(0.0);
+                .unwrap_or(0);
 
             (latest, initial)
         } else {
             let latest = queries::get_latest_hypixel_snapshot(&data.db, db_user.id, key)
                 .await?
                 .map(|s| s.stat_value)
-                .unwrap_or(0.0);
+                .unwrap_or(0);
 
             let initial = queries::get_first_hypixel_snapshot(&data.db, db_user.id, key)
                 .await?
                 .map(|s| s.stat_value)
-                .unwrap_or(0.0);
+                .unwrap_or(0);
 
             (latest, initial)
         };
 
-        let delta = (latest_val - initial_val).max(0.0);
+        let delta = (latest_val - initial_val).max(0);
 
         embed = embed.field(display_name_for_key(key), format!("+{:.0}", delta), true);
     }

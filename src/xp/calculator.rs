@@ -56,11 +56,11 @@ pub struct XPReward {
 pub fn calculate_xp_rewards(deltas: &[StatDelta], config: &XPConfig) -> Vec<XPReward> {
     let mut rewards = Vec::new();
     for d in deltas {
-        if d.difference <= 0.0 {
+        if d.difference <= 0 {
             continue;
         }
         if let Some(&xp_per_unit) = config.rewards.get(&d.stat_name) {
-            let units = d.difference.round() as i64;
+            let units = d.difference;
             let xp_earned = (units as f64) * xp_per_unit;
             rewards.push(XPReward {
                 stat_name: d.stat_name.clone(),
@@ -145,7 +145,7 @@ mod tests {
     fn xp_single_stat_delta() {
         let config = default_config();
         // 3 wins * 50 XP/win = 150 XP
-        let deltas = vec![StatDelta::new(1, "wins".to_string(), 10.0, 13.0)];
+        let deltas = vec![StatDelta::new(1, "wins".to_string(), 10, 13)];
         assert_eq!(calculate_xp(&deltas, &config), 150.0);
     }
 
@@ -153,9 +153,9 @@ mod tests {
     fn xp_multiple_stat_deltas() {
         let config = default_config();
         let deltas = vec![
-            StatDelta::new(1, "wins".to_string(), 0.0, 2.0), // 2 * 50 = 100
-            StatDelta::new(1, "kills".to_string(), 0.0, 10.0), // 10 * 5 = 50
-            StatDelta::new(1, "beds_broken".to_string(), 0.0, 4.0), // 4 * 25 = 100
+            StatDelta::new(1, "wins".to_string(), 0, 2), // 2 * 50 = 100
+            StatDelta::new(1, "kills".to_string(), 0, 10), // 10 * 5 = 50
+            StatDelta::new(1, "beds_broken".to_string(), 0, 4), // 4 * 25 = 100
         ];
         assert_eq!(calculate_xp(&deltas, &config), 250.0);
     }
@@ -164,14 +164,14 @@ mod tests {
     fn xp_negative_delta_ignored() {
         let config = default_config();
         // Stat went down (possible API glitch) — should award 0 XP
-        let deltas = vec![StatDelta::new(1, "wins".to_string(), 10.0, 8.0)];
+        let deltas = vec![StatDelta::new(1, "wins".to_string(), 10, 8)];
         assert_eq!(calculate_xp(&deltas, &config), 0.0);
     }
 
     #[test]
     fn xp_unknown_stat_ignored() {
         let config = default_config();
-        let deltas = vec![StatDelta::new(1, "unknown_stat".to_string(), 0.0, 100.0)];
+        let deltas = vec![StatDelta::new(1, "unknown_stat".to_string(), 0, 100)];
         assert_eq!(calculate_xp(&deltas, &config), 0.0);
     }
 
@@ -179,9 +179,9 @@ mod tests {
     fn xp_discord_stats_included() {
         let config = default_config();
         let deltas = vec![
-            StatDelta::new(1, "messages_sent".to_string(), 0.0, 5.0), // 5 * 1 = 5
-            StatDelta::new(1, "reactions_added".to_string(), 0.0, 3.0), // 3 * 1 = 3
-            StatDelta::new(1, "commands_used".to_string(), 0.0, 2.0), // 2 * 2 = 4
+            StatDelta::new(1, "messages_sent".to_string(), 0, 5), // 5 * 1 = 5
+            StatDelta::new(1, "reactions_added".to_string(), 0, 3), // 3 * 1 = 3
+            StatDelta::new(1, "commands_used".to_string(), 0, 2), // 2 * 2 = 4
         ];
         assert_eq!(calculate_xp(&deltas, &config), 12.0);
     }
@@ -192,7 +192,7 @@ mod tests {
         rewards.insert("wins".to_string(), 100.0);
         let config = XPConfig::new(rewards);
 
-        let deltas = vec![StatDelta::new(1, "wins".to_string(), 0.0, 3.0)]; // 3 * 100 = 300
+        let deltas = vec![StatDelta::new(1, "wins".to_string(), 0, 3)]; // 3 * 100 = 300
         assert_eq!(calculate_xp(&deltas, &config), 300.0);
     }
 

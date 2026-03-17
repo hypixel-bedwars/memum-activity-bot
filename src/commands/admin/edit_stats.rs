@@ -213,7 +213,8 @@ pub async fn add_bedwars(
     config.xp_config.insert(stat_key.clone(), xp_per_unit);
     let config_json = serde_json::to_value(config.clone())?;
     queries::update_guild_config(&data.db, guild_id, config_json).await?;
-    data.guild_configs.insert(guild_id, config);
+    data.guild_configs
+        .insert(guild_id, (config, std::time::Instant::now()));
 
     let mode_display = BEDWARS_MODES
         .iter()
@@ -295,7 +296,8 @@ pub async fn add_discord(
     config.xp_config.insert(stat.clone(), xp_per_unit);
     let config_json = serde_json::to_value(&config)?;
     queries::update_guild_config(&data.db, guild_id, config_json).await?;
-    data.guild_configs.insert(guild_id, config);
+    data.guild_configs
+        .insert(guild_id, (config, std::time::Instant::now()));
 
     let stat_display = DISCORD_STATS
         .iter()
@@ -360,7 +362,8 @@ pub async fn edit_stat(
     config.xp_config.insert(stat_name.clone(), new_xp_value);
     let config_json = serde_json::to_value(&config)?;
     queries::update_guild_config(&data.db, guild_id, config_json).await?;
-    data.guild_configs.insert(guild_id, config);
+    data.guild_configs
+        .insert(guild_id, (config, std::time::Instant::now()));
 
     ctx.say(format!(
         "Updated `{stat_name}`: {old_xp} XP/unit → **{new_xp_value} XP/unit**."
@@ -413,7 +416,8 @@ pub async fn remove(
 
     let config_json = serde_json::to_value(&config)?;
     queries::update_guild_config(&data.db, guild_id, config_json).await?;
-    data.guild_configs.insert(guild_id, config);
+    data.guild_configs
+        .insert(guild_id, (config, std::time::Instant::now()));
 
     ctx.say(format!(
         "Removed `{stat_name}` from XP configuration. Existing snapshots are preserved."

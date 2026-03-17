@@ -103,7 +103,7 @@ pub struct DbStatsSnapshot {
     pub id: i64,
     pub user_id: i64,
     pub stat_name: String,
-    pub stat_value: f64,
+    pub stat_value: i64,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -130,7 +130,7 @@ pub struct DbSweepCursor {
     pub user_id: i64,
     pub source: String,
     pub stat_name: String,
-    pub stat_value: f64,
+    pub stat_value: i64,
     pub last_snapshot_ts: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -210,9 +210,9 @@ pub struct DbStatDelta {
     pub id: i64,
     pub user_id: i64,
     pub stat_name: String,
-    pub old_value: f64,
-    pub new_value: f64,
-    pub delta: f64,
+    pub old_value: i64,
+    pub new_value: i64,
+    pub delta: i64,
     /// The sweeper source that produced this delta (e.g. `"hypixel"`, `"discord"`).
     pub source: String,
     pub created_at: DateTime<Utc>,
@@ -277,7 +277,7 @@ impl Default for MessageValidationState {
 pub struct DbDailySnapshot {
     pub user_id: i64,
     pub stat_name: String,
-    pub stat_value: f64,
+    pub stat_value: i64,
     pub snapshot_date: NaiveDate,
     pub created_at: DateTime<Utc>,
 }

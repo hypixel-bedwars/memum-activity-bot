@@ -403,12 +403,28 @@ async fn handle_register_button(
         }
     };
 
+    // Normalize the Discord tag before passing it to perform_registration.
+    // Serenity's User::tag() appends "#0" for accounts that have migrated away
+    // from the legacy username#discriminator system. Hypixel stores the social
+    // link as whatever the user typed in-game, which is typically just the
+    // username (no "#0"). Stripping the "#0" suffix ensures the comparison
+    // succeeds for migrated accounts while leaving legacy tags (e.g. "name#1234")
+    // unchanged.
+    let raw_tag = component.user.tag();
+    let user_tag = raw_tag.strip_suffix("#0").unwrap_or(&raw_tag);
+
+    debug!(
+        discord_id,
+        minecraft_username = %minecraft_username,
+        "Initiating registration via button press"
+    );
+
     let result = perform_registration(
         ctx,
         data,
         guild_id,
         component.user.id,
-        &component.user.tag(),
+        user_tag,
         &minecraft_username,
     )
     .await;

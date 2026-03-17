@@ -592,7 +592,7 @@ pub async fn insert_hypixel_snapshot(
     pool: &PgPool,
     user_id: i64,
     stat_name: &str,
-    stat_value: f64,
+    stat_value: i64,
     timestamp: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
     debug!(
@@ -664,7 +664,7 @@ pub async fn insert_discord_snapshot(
     pool: &PgPool,
     user_id: i64,
     stat_name: &str,
-    stat_value: f64,
+    stat_value: i64,
     timestamp: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
     debug!(
@@ -866,7 +866,7 @@ pub async fn upsert_sweep_cursor(
     user_id: i64,
     source: &str,
     stat_name: &str,
-    stat_value: f64,
+    stat_value: i64,
     last_snapshot_ts: &DateTime<Utc>,
     updated_at: &DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
@@ -899,7 +899,7 @@ pub async fn upsert_sweep_cursor_in_tx(
     user_id: i64,
     source: &str,
     stat_name: &str,
-    stat_value: f64,
+    stat_value: i64,
     last_snapshot_ts: &DateTime<Utc>,
     updated_at: &DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
@@ -1203,9 +1203,9 @@ pub async fn insert_stat_delta_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     user_id: i64,
     stat_name: &str,
-    old_value: f64,
-    new_value: f64,
-    delta: f64,
+    old_value: i64,
+    new_value: i64,
+    delta: i64,
     source: &str,
     created_at: &DateTime<Utc>,
 ) -> Result<i64, sqlx::Error> {
@@ -1235,9 +1235,9 @@ pub async fn insert_stat_delta(
     pool: &PgPool,
     user_id: i64,
     stat_name: &str,
-    old_value: f64,
-    new_value: f64,
-    delta: f64,
+    old_value: i64,
+    new_value: i64,
+    delta: i64,
     source: &str,
     created_at: &DateTime<Utc>,
 ) -> Result<i64, sqlx::Error> {
@@ -1436,8 +1436,8 @@ pub async fn get_stat_delta_between(
     user_id: i64,
     start: NaiveDate,
     end: NaiveDate,
-) -> Result<Vec<(String, f64)>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, (String, f64)>(
+) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, i64)>(
         r#"
         SELECT
             e.stat_name,
@@ -1933,7 +1933,7 @@ pub async fn award_event_xp_for_delta(
     user_id: i64,
     stat_name: &str,
     delta_id: i64,
-    difference: f64,
+    difference: i64,
     now: &DateTime<Utc>,
 ) -> Result<f64, sqlx::Error> {
     debug!(
@@ -1959,7 +1959,7 @@ pub async fn award_event_xp_for_delta(
         return Ok(0.0);
     }
 
-    let units = difference.round() as i32;
+    let units = difference;
     if units <= 0 {
         return Ok(0.0);
     }
@@ -2000,7 +2000,7 @@ pub async fn award_admin_event_xp(
     pool: &PgPool,
     guild_id: i64,
     user_id: i64,
-    amount: f64,
+    amount: i64,
     now: &DateTime<Utc>,
 ) -> Result<f64, sqlx::Error> {
     debug!(
@@ -2028,7 +2028,7 @@ pub async fn award_admin_event_xp(
 
     // Insert a stat_delta for this admin action
     let delta_id = insert_stat_delta(
-        pool, user_id, "admin_xp", 0.0,    // old_value
+        pool, user_id, "admin_xp", 0,      // old_value
         amount, // new_value
         amount, // delta
         "admin", now,
@@ -2048,13 +2048,13 @@ pub async fn award_admin_event_xp(
         .bind("admin_xp")
         .bind(delta_id)
         .bind(1) // units
-        .bind(amount) // xp_per_unit
-        .bind(amount) // xp_earned
+        .bind(amount as f64) // xp_per_unit
+        .bind(amount as f64) // xp_earned
         .bind(now)
         .execute(pool)
         .await?;
 
-        total_xp += amount;
+        total_xp += amount as f64;
     }
 
     debug!("Awarded {} total event XP for admin action", total_xp);
@@ -2101,13 +2101,13 @@ pub async fn get_user_event_stats(
     pool: &PgPool,
     event_id: i64,
     user_id: i64,
-) -> Result<Vec<(String, f64, f64)>, sqlx::Error> {
+) -> Result<Vec<(String, f64, i64)>, sqlx::Error> {
     debug!(
         "queries::get_user_event_stats: event_id={}, user_id={}",
         event_id, user_id
     );
-    let rows = sqlx::query_as::<_, (String, f64, f64)>(
-        "SELECT stat_name, SUM(xp_earned) AS total_xp, CAST(SUM(units) AS FLOAT8) AS total_units
+    let rows = sqlx::query_as::<_, (String, f64, i64)>(
+        "SELECT stat_name, COALESCE(SUM(xp_earned), 0.0) AS total_xp, COALESCE(SUM(units), 0)::BIGINT AS total_units
          FROM event_xp
          WHERE event_id = $1 AND user_id = $2
          GROUP BY stat_name
@@ -2469,7 +2469,7 @@ async fn process_batch(
             None => continue,
         };
 
-        let units = delta.delta.round() as i32;
+        let units = delta.delta;
         if units <= 0 {
             continue;
         }
@@ -2841,18 +2841,18 @@ pub async fn update_persistent_event_leaderboard_milestone_message(
 pub struct StatisticValue {
     pub key: String,
     pub label: String,
-    pub value: f64,
+    pub value: i64,
 }
 
 /// Aggregated statistics for a guild or event, used by the statistics card.
 #[derive(Debug, Clone)]
 pub struct GuildStatistics {
     /// Raw total messages (every non-bot guild message, since rollout).
-    pub total_messages: f64,
+    pub total_messages: i64,
     /// Validated messages (passed spam/length checks).
-    pub valid_messages: f64,
+    pub valid_messages: i64,
     /// Total voice chat minutes across all active members.
-    pub total_vc_minutes: f64,
+    pub total_vc_minutes: i64,
     /// Total XP held by active members (guild-wide) or earned in event.
     pub total_xp: f64,
     /// Number of participants; `Some` only for event statistics.
@@ -2895,8 +2895,8 @@ pub async fn get_guild_statistics_ranged(
     .await?;
 
     // Per-stat delta sums within the time range.
-    let rows: Vec<(String, f64)> = sqlx::query_as(
-        "SELECT sd.stat_name, COALESCE(SUM(sd.delta), 0)
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT sd.stat_name, COALESCE(SUM(sd.delta)::bigint, 0) as total
          FROM stat_deltas sd
          JOIN users u ON u.id = sd.user_id
          WHERE u.guild_id = $1
@@ -2905,7 +2905,7 @@ pub async fn get_guild_statistics_ranged(
            AND sd.created_at >= $2
            AND sd.created_at <= $3
          GROUP BY sd.stat_name
-         ORDER BY SUM(sd.delta) DESC",
+         ORDER BY total DESC",
     )
     .bind(guild_id)
     .bind(start_dt)
@@ -2913,9 +2913,9 @@ pub async fn get_guild_statistics_ranged(
     .fetch_all(pool)
     .await?;
 
-    let mut total_messages = 0.0_f64;
-    let mut valid_messages = 0.0_f64;
-    let mut total_vc_minutes = 0.0_f64;
+    let mut total_messages = 0_i64;
+    let mut valid_messages = 0_i64;
+    let mut total_vc_minutes = 0_i64;
     let mut other_stat_changes: Vec<StatisticValue> = Vec::new();
 
     for (key, value) in rows {
@@ -2960,21 +2960,21 @@ pub async fn get_guild_statistics(
     .await?;
 
     // Per-stat delta sums for all active members.
-    let rows: Vec<(String, f64)> = sqlx::query_as(
-        "SELECT sd.stat_name, COALESCE(SUM(sd.delta), 0)
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT sd.stat_name, COALESCE(SUM(sd.delta)::bigint, 0) as total
          FROM stat_deltas sd
          JOIN users u ON u.id = sd.user_id
          WHERE u.guild_id = $1 AND u.active = TRUE AND sd.delta > 0
          GROUP BY sd.stat_name
-         ORDER BY SUM(sd.delta) DESC",
+         ORDER BY total DESC",
     )
     .bind(guild_id)
     .fetch_all(pool)
     .await?;
 
-    let mut total_messages = 0.0_f64;
-    let mut valid_messages = 0.0_f64;
-    let mut total_vc_minutes = 0.0_f64;
+    let mut total_messages = 0_i64;
+    let mut valid_messages = 0_i64;
+    let mut total_vc_minutes = 0_i64;
     let mut other_stat_changes: Vec<StatisticValue> = Vec::new();
 
     for (key, value) in rows {
@@ -3017,20 +3017,20 @@ pub async fn get_event_statistics(
             .await?;
 
     // Per-stat unit totals for this event.
-    let rows: Vec<(String, f64)> = sqlx::query_as(
-        "SELECT stat_name, COALESCE(SUM(units), 0)
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT stat_name, COALESCE(SUM(units)::bigint, 0) AS total
          FROM event_xp
          WHERE event_id = $1
          GROUP BY stat_name
-         ORDER BY SUM(units) DESC",
+         ORDER BY total DESC",
     )
     .bind(event_id)
     .fetch_all(pool)
     .await?;
 
-    let mut total_messages = 0.0_f64;
-    let mut valid_messages = 0.0_f64;
-    let mut total_vc_minutes = 0.0_f64;
+    let mut total_messages = 0_i64;
+    let mut valid_messages = 0_i64;
+    let mut total_vc_minutes = 0_i64;
     let mut other_stat_changes: Vec<StatisticValue> = Vec::new();
 
     for (key, value) in rows {

@@ -127,7 +127,7 @@ fn is_dream_mode_stat(key: &str) -> bool {
 #[derive(Debug, Clone)]
 pub struct BedwarsStats {
     /// Dynamic stat map keyed by raw Hypixel API stat name.
-    pub stats: HashMap<String, f64>,
+    pub stats: HashMap<String, i64>,
 }
 
 impl BedwarsStats {
@@ -141,7 +141,7 @@ impl BedwarsStats {
             if is_dream_mode_stat(key) {
                 continue;
             }
-            if let Some(f) = value.as_f64() {
+            if let Some(f) = value.as_i64() {
                 stats.insert(key.clone(), f);
             }
         }
@@ -157,19 +157,16 @@ impl BedwarsStats {
 
     // Convenience accessors
 
-    pub fn wins(&self) -> f64 {
-        self.stats.get("wins_bedwars").copied().unwrap_or(0.0)
+    pub fn wins(&self) -> i64 {
+        self.stats.get("wins_bedwars").copied().unwrap_or(0)
     }
 
-    pub fn kills(&self) -> f64 {
-        self.stats.get("kills_bedwars").copied().unwrap_or(0.0)
+    pub fn kills(&self) -> i64 {
+        self.stats.get("kills_bedwars").copied().unwrap_or(0)
     }
 
-    pub fn beds_broken(&self) -> f64 {
-        self.stats
-            .get("beds_broken_bedwars")
-            .copied()
-            .unwrap_or(0.0)
+    pub fn beds_broken(&self) -> i64 {
+        self.stats.get("beds_broken_bedwars").copied().unwrap_or(0)
     }
 }
 

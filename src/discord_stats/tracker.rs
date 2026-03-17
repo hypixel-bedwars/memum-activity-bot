@@ -29,7 +29,7 @@ pub async fn handle_event(event: &FullEvent, data: &Data) -> Result<(), Error> {
                 new_message.author.id.get() as i64,
                 guild_id.get() as i64,
                 "total_messages_raw",
-                1.0,
+                1,
             )
             .await;
 
@@ -47,7 +47,7 @@ pub async fn handle_event(event: &FullEvent, data: &Data) -> Result<(), Error> {
                 new_message.author.id.get() as i64,
                 guild_id.get() as i64,
                 "messages_sent",
-                1.0,
+                1,
             )
             .await;
         }
@@ -67,7 +67,7 @@ pub async fn handle_event(event: &FullEvent, data: &Data) -> Result<(), Error> {
                 user_id.get() as i64,
                 guild_id.get() as i64,
                 "reactions_added",
-                1.0,
+                1,
             )
             .await;
         }
@@ -195,7 +195,7 @@ async fn handle_voice_state_update(
                 discord_user_id,
                 guild_id.get() as i64,
                 "voice_minutes",
-                minutes as f64,
+                minutes,
             )
             .await;
         }
@@ -210,7 +210,7 @@ async fn handle_voice_state_update(
 
 /// Record command usage (called from command hook)
 pub async fn record_command_usage(pool: &PgPool, data: &Data, discord_user_id: i64, guild_id: i64) {
-    increment_stat_by(pool, data, discord_user_id, guild_id, "commands_used", 1.0).await;
+    increment_stat_by(pool, data, discord_user_id, guild_id, "commands_used", 1).await;
 }
 
 /// Increment a Discord stat by `by` units and immediately apply XP + event XP.
@@ -220,9 +220,9 @@ async fn increment_stat_by(
     discord_user_id: i64,
     guild_id: i64,
     stat_name: &str,
-    by: f64,
+    by: i64,
 ) {
-    if by <= 0.0 {
+    if by <= 0 {
         return;
     }
 
@@ -251,7 +251,7 @@ async fn increment_stat_by(
     // ----------------------------------------------------
     let current = match queries::get_latest_discord_snapshot(pool, user.id, stat_name).await {
         Ok(Some(s)) => s.stat_value,
-        Ok(None) => 0.0,
+        Ok(None) => 0,
         Err(e) => {
             error!(error = %e, "failed to fetch snapshot");
             return;
@@ -277,26 +277,47 @@ async fn increment_stat_by(
     // ----------------------------------------------------
     let delta = StatDelta::new(user.id, stat_name.to_string(), current, new_value);
 
-    if delta.difference <= 0.0 {
+    if delta.difference <= 0 {
         return;
     }
 
     // ----------------------------------------------------
-    // Load guild XP config so we use per-guild multipliers
+    // Load guild XP config so we use per-guild multipliers.
+    // The cache entry is valid for GUILD_CONFIG_TTL. After that the config is
+    // re-fetched from the DB so changes made by direct DB edits (or any path
+    // that bypasses the in-memory update) are eventually picked up without a
+    // bot restart. Admin commands (edit_stats, set_register_role, etc.) still
+    // update the cache immediately on write.
     // ----------------------------------------------------
-    let guild_config = if let Some(cached) = data.guild_configs.get(&guild_id) {
-        cached.clone()
-    } else {
-        let fetched = match queries::get_guild(pool, guild_id).await {
-            Ok(Some(g)) => serde_json::from_value(g.config_json).unwrap_or_default(),
-            Ok(None) => GuildConfig::default(),
-            Err(e) => {
-                error!(error = %e, "failed to fetch guild config");
-                GuildConfig::default()
+    const GUILD_CONFIG_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+    let guild_config = {
+        // Check cache — drop the Ref before the await so we don't hold the
+        // DashMap shard lock across an async boundary.
+        let cached = data.guild_configs.get(&guild_id).and_then(|entry| {
+            let (cfg, cached_at) = entry.value();
+            if cached_at.elapsed() < GUILD_CONFIG_TTL {
+                Some(cfg.clone())
+            } else {
+                None
             }
-        };
-        data.guild_configs.insert(guild_id, fetched.clone());
-        fetched
+        });
+
+        if let Some(config) = cached {
+            config
+        } else {
+            let fetched = match queries::get_guild(pool, guild_id).await {
+                Ok(Some(g)) => serde_json::from_value(g.config_json).unwrap_or_default(),
+                Ok(None) => GuildConfig::default(),
+                Err(e) => {
+                    error!(error = %e, "failed to fetch guild config");
+                    GuildConfig::default()
+                }
+            };
+            data.guild_configs
+                .insert(guild_id, (fetched.clone(), std::time::Instant::now()));
+            fetched
+        }
     };
 
     let xp_config = XPConfig::new(guild_config.xp_config.clone());
@@ -364,7 +385,72 @@ async fn increment_stat_by(
     }
 
     // ----------------------------------------------------
-    // Commit transaction — stat_delta + xp_events are now durable
+    // Upsert XP and recalculate level inside the transaction — makes the XP
+    // increment atomic with stat_delta + xp_events so a crash between commit
+    // and increment_xp can no longer leave a user with missing XP.
+    // ----------------------------------------------------
+    if total_xp > 0.0 {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO xp (user_id, total_xp, last_updated)
+             VALUES ($1, $2, $3)
+             ON CONFLICT(user_id) DO UPDATE SET
+                 total_xp = xp.total_xp + excluded.total_xp,
+                 last_updated = excluded.last_updated",
+        )
+        .bind(user.id)
+        .bind(total_xp)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        {
+            error!(error = %e, "failed upserting xp in transaction");
+            return;
+        }
+
+        let xp_row = match sqlx::query_as::<_, crate::database::models::DbXP>(
+            "SELECT * FROM xp WHERE user_id = $1",
+        )
+        .bind(user.id)
+        .fetch_optional(&mut *tx)
+        .await
+        {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                error!(
+                    user_id = user.id,
+                    "xp row missing after upsert in transaction"
+                );
+                return;
+            }
+            Err(e) => {
+                error!(error = %e, "failed fetching xp row in transaction");
+                return;
+            }
+        };
+
+        let new_level = calculate_level(
+            xp_row.total_xp,
+            data.config.base_level_xp,
+            data.config.level_exponent,
+        );
+
+        if new_level != xp_row.level {
+            if let Err(e) =
+                sqlx::query("UPDATE xp SET level = $1, last_updated = $2 WHERE user_id = $3")
+                    .bind(new_level)
+                    .bind(&now)
+                    .bind(user.id)
+                    .execute(&mut *tx)
+                    .await
+            {
+                error!(error = %e, "failed updating level in transaction");
+                return;
+            }
+        }
+    }
+
+    // ----------------------------------------------------
+    // Commit transaction — stat_delta + xp_events + xp + level are now durable
     // ----------------------------------------------------
     if let Err(e) = tx.commit().await {
         error!(error = %e, "transaction commit failed");
@@ -372,7 +458,9 @@ async fn increment_stat_by(
     }
 
     // ----------------------------------------------------
-    // Award event XP for this delta (post-commit, pool-only)
+    // Award event XP for this delta (post-commit, pool-only).
+    // Event XP cannot run inside the TX because award_event_xp_for_delta
+    // uses the pool directly; its own level update is handled below.
     // ----------------------------------------------------
     let event_xp = match queries::award_event_xp_for_delta(
         pool,
@@ -392,50 +480,31 @@ async fn increment_stat_by(
         }
     };
 
-    // ----------------------------------------------------
-    // Apply regular XP to user (pool-only query — runs after transaction commit)
-    // ----------------------------------------------------
-    if total_xp > 0.0 {
-        if let Err(e) = queries::increment_xp(pool, user.id, total_xp, &now).await {
-            error!(error = %e, "failed incrementing xp");
-            return;
-        }
-    }
-
-    // If event XP was also earned we need an additional increment (events
-    // contribute to the user's global total_xp per spec).
+    // If event XP was earned, increment the global total and recalculate level.
+    // This is post-commit (same pattern as hypixel_sweeper) because event XP
+    // is awarded by a separate pool query that cannot run inside the TX.
     if event_xp > 0.0 {
         if let Err(e) = queries::increment_xp(pool, user.id, event_xp, &now).await {
             error!(error = %e, "failed incrementing event xp");
-        }
-    }
-
-    // ----------------------------------------------------
-    // Fetch updated XP total and recalculate level (only if any XP changed)
-    // ----------------------------------------------------
-    if total_xp > 0.0 || event_xp > 0.0 {
-        let xp_row = match queries::get_xp(pool, user.id).await {
-            Ok(Some(x)) => x,
-            Ok(None) => {
-                error!(user_id = user.id, "xp row missing after increment");
-                return;
-            }
-            Err(e) => {
-                error!(error = %e, "failed fetching xp row");
-                return;
-            }
-        };
-
-        let new_level = calculate_level(
-            xp_row.total_xp,
-            data.config.base_level_xp,
-            data.config.level_exponent,
-        );
-
-        if new_level != xp_row.level {
-            if let Err(e) = queries::update_level(pool, user.id, new_level, &now).await {
-                error!(error = %e, "failed updating level");
-                return;
+        } else {
+            match queries::get_xp(pool, user.id).await {
+                Ok(Some(xp_row)) => {
+                    let new_level = calculate_level(
+                        xp_row.total_xp,
+                        data.config.base_level_xp,
+                        data.config.level_exponent,
+                    );
+                    if new_level != xp_row.level {
+                        if let Err(e) = queries::update_level(pool, user.id, new_level, &now).await
+                        {
+                            error!(error = %e, "failed updating level after event xp");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    error!(user_id = user.id, "xp row missing after event xp increment")
+                }
+                Err(e) => error!(error = %e, "failed fetching xp row after event xp"),
             }
         }
     }

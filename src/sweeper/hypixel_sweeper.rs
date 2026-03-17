@@ -225,7 +225,7 @@ async fn refresh_user(data: &Data, user: &DbUser) -> Result<()> {
             continue;
         }
 
-        let old_value = previous.as_ref().map(|s| s.stat_value).unwrap_or(0.0);
+        let old_value = previous.as_ref().map(|s| s.stat_value).unwrap_or(0);
 
         if new_value != old_value {
             queries::insert_hypixel_snapshot(pool, user.id, stat_name, new_value, now).await?;
@@ -233,7 +233,7 @@ async fn refresh_user(data: &Data, user: &DbUser) -> Result<()> {
 
         let diff = new_value - old_value;
 
-        if diff.abs() > f64::EPSILON {
+        if diff != 0 {
             deltas.push(StatDelta::new(
                 user.id,
                 stat_name.clone(),
@@ -308,7 +308,7 @@ async fn apply_stat_deltas(
 
     // Filter to deltas that are positive — these get a stat_deltas row
     // regardless of whether they have an XP multiplier configured.
-    let positive_deltas: Vec<&StatDelta> = deltas.iter().filter(|d| d.difference > 0.0).collect();
+    let positive_deltas: Vec<&StatDelta> = deltas.iter().filter(|d| d.difference > 0).collect();
 
     if positive_deltas.is_empty() {
         return Ok(());
@@ -327,7 +327,7 @@ async fn apply_stat_deltas(
 
     // Collect (stat_name, delta_id, difference) tuples so we can award
     // event XP after the transaction commits.
-    let mut committed_deltas: Vec<(String, i64, f64)> = Vec::new();
+    let mut committed_deltas: Vec<(String, i64, i64)> = Vec::new();
 
     for delta in &positive_deltas {
         let delta_id = queries::insert_stat_delta_in_tx(

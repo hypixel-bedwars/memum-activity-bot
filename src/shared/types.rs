@@ -5,6 +5,7 @@
 /// serves as the universal interface between stat sources and the XP calculator.
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::Instant;
 
 use dashmap::DashMap;
 use sqlx::PgPool;
@@ -43,8 +44,10 @@ pub struct Data {
     pub leaderboard_cache: LeaderboardCache,
 
     /// In-memory cache for guild configurations, keyed by `guild_id`.
-    /// Avoids repeated database queries for guild XP configs.
-    pub guild_configs: DashMap<i64, GuildConfig>,
+    /// Each entry pairs the `GuildConfig` with the `Instant` it was cached so
+    /// that the tracker can re-fetch after the TTL (see `GUILD_CONFIG_TTL` in
+    /// `discord_stats/tracker.rs`) without needing a bot restart.
+    pub guild_configs: DashMap<i64, (GuildConfig, Instant)>,
 
     /// State for message validation, used by the Discord activity tracker to determine
     /// if a message is valid for XP (e.g. not a bot command, not a duplicate, etc.).
@@ -81,18 +84,18 @@ pub struct StatDelta {
     pub stat_name: String,
 
     /// The previous value of the stat.
-    pub old_value: f64,
+    pub old_value: i64,
 
     /// The current value of the stat.
-    pub new_value: f64,
+    pub new_value: i64,
 
     /// The computed difference (`new_value - old_value`).
-    pub difference: f64,
+    pub difference: i64,
 }
 
 impl StatDelta {
     /// Create a new `StatDelta`, automatically computing the difference.
-    pub fn new(user_id: i64, stat_name: String, old_value: f64, new_value: f64) -> Self {
+    pub fn new(user_id: i64, stat_name: String, old_value: i64, new_value: i64) -> Self {
         Self {
             user_id,
             stat_name,

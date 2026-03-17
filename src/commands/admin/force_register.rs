@@ -173,7 +173,7 @@ pub async fn force_register(
         "commands_used",
         "total_messages_raw",
     ] {
-        queries::insert_discord_snapshot(&ctx.data().db, db_user.id, stat_name, 0.0, now).await?;
+        queries::insert_discord_snapshot(&ctx.data().db, db_user.id, stat_name, 0, now).await?;
     }
 
     let _ = fetch_and_cache_head_texture(&ctx.data().db, db_user.id, &profile.id).await;

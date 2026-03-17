@@ -317,7 +317,7 @@ pub async fn perform_registration(
         "commands_used",
         "total_messages_raw",
     ] {
-        queries::insert_discord_snapshot(&data.db, db_user.id, stat_name, 0.0, now).await?;
+        queries::insert_discord_snapshot(&data.db, db_user.id, stat_name, 0, now).await?;
     }
 
     debug!(
@@ -391,12 +391,15 @@ pub async fn register(
         .guild_id()
         .ok_or("This command can only be used in a server")?;
 
+    let raw_tag = ctx.author().tag();
+    let user_tag = raw_tag.strip_suffix("#0").unwrap_or(&raw_tag);
+
     let (msg, user_data) = perform_registration(
         ctx.serenity_context(),
         ctx.data(),
         guild_id,
         ctx.author().id,
-        &ctx.author().tag(),
+        user_tag,
         &minecraft_username,
     )
     .await?;

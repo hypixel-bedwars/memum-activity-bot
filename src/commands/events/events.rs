@@ -318,7 +318,7 @@ pub async fn level(
     let total_xp: f64 = stats.iter().map(|(_, xp, _)| *xp).sum();
 
     // Build stat_deltas: display name + count, sorted desc by XP (already sorted from DB), up to 8
-    let mut stat_deltas: Vec<(String, f64)> = stats
+    let mut stat_deltas: Vec<(String, i64)> = stats
         .into_iter()
         .filter(|(_, xp, _)| *xp > 0.0)
         .map(|(key, _, count)| (display_name_for_key(&key), count))

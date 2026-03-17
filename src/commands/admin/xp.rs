@@ -36,7 +36,7 @@ pub async fn xp(_ctx: Context<'_>) -> Result<(), Error> {
 pub async fn add(
     ctx: Context<'_>,
     #[description = "User to add XP to"] user: serenity::User,
-    #[description = "Amount of XP to add"] amount: f64,
+    #[description = "Amount of XP to add"] mut amount: i64,
 ) -> Result<(), Error> {
     let data = ctx.data();
     let pool = &data.db;
@@ -49,8 +49,10 @@ pub async fn add(
 
     let now = chrono::Utc::now();
 
+    amount = if amount < 0 { 0 } else { amount };
+
     // Update XP
-    queries::increment_xp(pool, db_user.id, amount, &now).await?;
+    queries::increment_xp(pool, db_user.id, amount as f64, &now).await?;
 
     // Award event XP if there are active events
     let event_xp =
@@ -115,7 +117,7 @@ pub async fn add(
 pub async fn remove(
     ctx: Context<'_>,
     #[description = "User to remove XP from"] user: serenity::User,
-    #[description = "Amount of XP to remove"] amount: f64,
+    #[description = "Amount of XP to remove"] mut amount: i64,
 ) -> Result<(), Error> {
     let data = ctx.data();
     let pool = &data.db;
@@ -128,7 +130,9 @@ pub async fn remove(
 
     let now = chrono::Utc::now();
 
-    queries::increment_xp(pool, db_user.id, -amount, &now).await?;
+    amount = if amount < 0 { 0 } else { amount };
+
+    queries::increment_xp(pool, db_user.id, -amount as f64, &now).await?;
 
     // Award event XP if there are active events (negative for remove)
     let event_xp =

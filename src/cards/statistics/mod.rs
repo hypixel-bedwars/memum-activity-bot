@@ -114,7 +114,7 @@ pub fn render(params: &StatisticsCardParams) -> Vec<u8> {
         col2_x,
         hl_base_y + hl_row_h,
         "TOTAL XP",
-        &format_stat(params.stats.total_xp),
+        &format_stat_xp(params.stats.total_xp),
         CYAN,
     );
 
@@ -186,7 +186,21 @@ pub fn render(params: &StatisticsCardParams) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 
 /// Format a stat value with thousand separators and no decimal for whole numbers.
-fn format_stat(v: f64) -> String {
+fn format_stat(v: i64) -> String {
+    let s = v.to_string();
+    let mut result = String::new();
+
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+
+    result.chars().rev().collect()
+}
+
+fn format_stat_xp(v: f64) -> String {
     if v.fract() == 0.0 {
         let n = v as i64;
         // Insert commas

@@ -113,38 +113,38 @@ pub async fn level(
     // "since registration" = latest snapshot − initial (registration-time) snapshot.
     // These are shown purely for cosmetic display on the level card.
     // XP is NOT recalculated here — it comes from the pipeline (xp.total_xp above).
-    let mut stat_deltas: Vec<(String, f64)> = Vec::new();
+    let mut stat_deltas: Vec<(String, i64)> = Vec::new();
 
     for key in &active_keys {
         let (latest_val, initial_val) = if is_discord_stat(key) {
             let latest = queries::get_latest_discord_snapshot(&data.db, db_user.id, key)
                 .await?
                 .map(|s| s.stat_value)
-                .unwrap_or(0.0);
+                .unwrap_or(0);
 
             let initial = queries::get_first_discord_snapshot(&data.db, db_user.id, key)
                 .await?
                 .map(|s| s.stat_value)
-                .unwrap_or(0.0);
+                .unwrap_or(0);
 
             (latest, initial)
         } else {
             let latest = queries::get_latest_hypixel_snapshot(&data.db, db_user.id, key)
                 .await?
                 .map(|s| s.stat_value)
-                .unwrap_or(0.0);
+                .unwrap_or(0);
 
             let initial = queries::get_first_hypixel_snapshot(&data.db, db_user.id, key)
                 .await?
                 .map(|s| s.stat_value)
-                .unwrap_or(0.0);
+                .unwrap_or(0);
 
             (latest, initial)
         };
 
-        let delta = (latest_val - initial_val).max(0.0);
+        let delta = (latest_val - initial_val).max(0);
 
-        if delta > 0.0 {
+        if delta > 0 {
             stat_deltas.push((display_name_for_key(key), delta));
         }
     }

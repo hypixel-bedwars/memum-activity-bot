@@ -38,7 +38,7 @@ pub struct LevelCardParams {
     /// XP span of the current level (xp_for_level(level+1) - xp_for_level(level)).
     pub xp_for_next_level: f64,
     /// `(display_name, delta)` pairs, already filtered to `delta > 0`, up to 8.
-    pub stat_deltas: Vec<(String, f64)>,
+    pub stat_deltas: Vec<(String, i64)>,
     pub xp_gained: f64,
     /// Raw PNG / JPEG bytes of the player's 80x80 Crafatar avatar.
     /// `None` -> a placeholder rectangle is drawn instead.

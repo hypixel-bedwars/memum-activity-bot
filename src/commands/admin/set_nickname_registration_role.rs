@@ -54,7 +54,8 @@ pub async fn set_nickname_registration_role(
 
     let config_json = serde_json::to_value(&guild_config)?;
     queries::update_guild_config(&data.db, guild_id_i64, config_json).await?;
-    data.guild_configs.insert(guild_id_i64, guild_config);
+    data.guild_configs
+        .insert(guild_id_i64, (guild_config, std::time::Instant::now()));
 
     let embed = CreateEmbed::default()
         .title("Nickname Registration Role Set")
@@ -119,7 +120,8 @@ pub async fn clear_nickname_registration_role(ctx: Context<'_>) -> Result<(), Er
 
     let config_json = serde_json::to_value(&guild_config)?;
     queries::update_guild_config(&data.db, guild_id_i64, config_json).await?;
-    data.guild_configs.insert(guild_id_i64, guild_config);
+    data.guild_configs
+        .insert(guild_id_i64, (guild_config, std::time::Instant::now()));
 
     let embed = CreateEmbed::default()
         .title("Nickname Registration Role Cleared")
