@@ -12,6 +12,7 @@ use crate::shared::types::{Context, Error};
     slash_command,
     guild_only,
     ephemeral,
+    rename = "audit-users",
     check = "crate::utils::permissions::admin_check"
 )]
 pub async fn audit_users(

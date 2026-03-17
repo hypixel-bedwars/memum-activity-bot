@@ -151,6 +151,7 @@ async fn load_guild_config(ctx: &Context<'_>) -> Result<(i64, GuildConfig), Erro
     slash_command,
     guild_only,
     ephemeral,
+    rename = "edit-stats",
     subcommands("add_bedwars", "add_discord", "edit_stat", "remove", "list")
 )]
 pub async fn edit_stats(_ctx: Context<'_>) -> Result<(), Error> {

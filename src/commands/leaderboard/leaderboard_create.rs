@@ -19,7 +19,7 @@ use super::helpers::{self, PAGE_SIZE};
 #[poise::command(
     slash_command,
     guild_only,
-    rename = "leaderboard_create",
+    rename = "leaderboard-create",
     check = "crate::utils::permissions::admin_check"
 )]
 pub async fn leaderboard_create(

@@ -14,6 +14,7 @@ use crate::shared::types::{Context, Error};
     slash_command,
     guild_only,
     ephemeral,
+    rename = "send-registration-embed",
     check = "crate::utils::permissions::admin_check"
 )]
 pub async fn send_registration_message(

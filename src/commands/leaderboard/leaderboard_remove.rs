@@ -16,7 +16,7 @@ use crate::shared::types::{Context, Error};
 #[poise::command(
     slash_command,
     guild_only,
-    rename = "leaderboard_remove",
+    rename = "leaderboard-remove",
     check = "crate::utils::permissions::admin_check"
 )]
 pub async fn leaderboard_remove(ctx: Context<'_>) -> Result<(), Error> {

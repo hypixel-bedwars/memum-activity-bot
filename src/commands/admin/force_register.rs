@@ -17,6 +17,7 @@ use crate::shared::types::{Context, Error};
 #[poise::command(
     slash_command,
     guild_only,
+    rename = "force-register",
     check = "crate::utils::permissions::admin_check"
 )]
 pub async fn force_register(
@@ -212,6 +213,7 @@ pub async fn force_register(
 #[poise::command(
     slash_command,
     guild_only,
+    rename = "force-unregister",
     check = "crate::utils::permissions::admin_check"
 )]
 pub async fn force_unregister(
