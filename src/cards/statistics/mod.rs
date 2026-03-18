@@ -75,7 +75,8 @@ pub fn render(params: &StatisticsCardParams) -> Vec<u8> {
     let hl_base_y: u32 = 108;
     let hl_row_h: u32 = 64;
     let col1_x: u32 = 28;
-    let col2_x: u32 = 510;
+    let col2_x: u32 = 380;
+    let col3_x: u32 = 610; // for participants if present, otherwise unused
 
     // Helper closure — renders a label+value pair in a mini sub-panel.
     let render_headline =
@@ -123,8 +124,8 @@ pub fn render(params: &StatisticsCardParams) -> Vec<u8> {
     if let Some(participants) = params.stats.participants {
         render_headline(
             &mut img,
-            col1_x,
-            next_section_y,
+            col3_x,
+            hl_base_y,
             "PARTICIPANTS",
             &participants.to_string(),
             CYAN,

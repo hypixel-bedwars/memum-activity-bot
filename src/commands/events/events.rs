@@ -5,6 +5,7 @@
 /// - /event info
 /// - /event leaderboard
 /// - /event level
+/// - /event statistics
 ///
 /// Admin commands:
 /// - /edit-event new

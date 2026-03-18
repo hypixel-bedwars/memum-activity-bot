@@ -118,24 +118,40 @@ pub async fn level(
     for key in &active_keys {
         let (latest_val, initial_val) = if is_discord_stat(key) {
             let latest = queries::get_latest_discord_snapshot(&data.db, db_user.id, key)
-                .await?
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "get_latest_discord_snapshot failed");
+                    e
+                })?
                 .map(|s| s.stat_value)
                 .unwrap_or(0);
 
             let initial = queries::get_first_discord_snapshot(&data.db, db_user.id, key)
-                .await?
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "get_latest_discord_snapshot failed");
+                    e
+                })?
                 .map(|s| s.stat_value)
                 .unwrap_or(0);
 
             (latest, initial)
         } else {
             let latest = queries::get_latest_hypixel_snapshot(&data.db, db_user.id, key)
-                .await?
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "get_latest_discord_snapshot failed");
+                    e
+                })?
                 .map(|s| s.stat_value)
                 .unwrap_or(0);
 
             let initial = queries::get_first_hypixel_snapshot(&data.db, db_user.id, key)
-                .await?
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "get_latest_discord_snapshot failed");
+                    e
+                })?
                 .map(|s| s.stat_value)
                 .unwrap_or(0);
 

@@ -65,13 +65,17 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
                 Box::pin(async move {
                     if let Some(guild_id) = ctx.guild_id() {
                         let data = ctx.data();
-                        tracker::record_command_usage(
+
+                        if let Err(e) = tracker::record_command_usage(
                             &data.db,
                             data,
                             ctx.author().id.get() as i64,
                             guild_id.get() as i64,
                         )
-                        .await;
+                        .await
+                        {
+                            tracing::error!(error = %e, "record_command_usage failed");
+                        }
                     }
                 })
             },

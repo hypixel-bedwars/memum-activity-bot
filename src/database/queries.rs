@@ -206,7 +206,7 @@ pub async fn get_discord_snapshot_before(
     pool: &PgPool,
     user_id: i64,
     stat_name: &str,
-    before_ts: &str,
+    before_ts: &DateTime<Utc>,
 ) -> Result<Option<DbStatsSnapshot>, sqlx::Error> {
     debug!(
         "queries::get_discord_snapshot_before: user_id={}, stat_name={}, before_ts={}",

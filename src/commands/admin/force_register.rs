@@ -72,14 +72,14 @@ pub async fn force_register(
         queries::get_user_by_discord_id(&ctx.data().db, discord_user_id, guild_id_i64).await?
     {
         let embed = CreateEmbed::default()
-            .title("Already Registered")
-            .color(0xFFAA00)
-            .description(format!(
-                "User is already registered as **{}** (UUID `{}`). If you want to change the linked Minecraft account, please unregister first with `/unregister`.",
-                existing_user.minecraft_uuid, existing_user.minecraft_uuid
-            ));
+        .title("Already Registered")
+        .color(0xFFAA00)
+        .description(format!(
+            "User is already registered as **{}** (UUID `{}`). If you want to change the linked Minecraft account, please unregister first with `/unregister`.",
+            existing_user.minecraft_uuid, existing_user.minecraft_uuid
+        ));
         ctx.send(poise::CreateReply::default().embed(embed)).await?;
-        logger(
+        let _ = logger(
             ctx.serenity_context(),
             ctx.data(),
             guild_id,
@@ -91,7 +91,7 @@ pub async fn force_register(
                 existing_user.minecraft_uuid
             ),
         )
-        .await?;
+        .await;
         return Ok(());
     }
 
@@ -114,7 +114,7 @@ pub async fn force_register(
             .color(0xFF4444)
             .description("I couldn't assign the registered role. Please ensure I have **Manage Roles** permission and my role is above the registered role.");
         ctx.send(poise::CreateReply::default().embed(embed)).await?;
-        logger(
+        let _ = logger(
             ctx.serenity_context(),
             ctx.data(),
             guild_id,
@@ -125,8 +125,8 @@ pub async fn force_register(
                 ctx.author().name
             ),
         )
-        .await?;
-        logger(
+        .await;
+        let _ = logger(
             ctx.serenity_context(),
             ctx.data(),
             guild_id,
@@ -137,7 +137,7 @@ pub async fn force_register(
                 ctx.author().name
             ),
         )
-        .await?;
+        .await;
         return Ok(());
     }
 
@@ -185,7 +185,16 @@ pub async fn force_register(
         "User forcibly registered by admin"
     );
 
-    logger(
+    let embed = CreateEmbed::default()
+        .title("Force Registration Successful")
+        .color(0x00BFFF)
+        .description(format!(
+            "User <@{}> has been forcibly registered as **{}** (UUID `{}`).",
+            user.id, profile.name, profile.id
+        ));
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
+
+    let _ = logger(
         ctx.serenity_context(),
         ctx.data(),
         guild_id,
@@ -198,16 +207,8 @@ pub async fn force_register(
             profile.id
         ),
     )
-    .await?;
+    .await;
 
-    let embed = CreateEmbed::default()
-        .title("Force Registration Successful")
-        .color(0x00BFFF)
-        .description(format!(
-            "User <@{}> has been forcibly registered as **{}** (UUID `{}`).",
-            user.id, profile.name, profile.id
-        ));
-    ctx.send(poise::CreateReply::default().embed(embed)).await?;
     Ok(())
 }
 #[poise::command(
@@ -284,14 +285,14 @@ pub async fn force_unregister(
         ));
     ctx.send(poise::CreateReply::default().embed(embed)).await?;
 
-    logger(
+    let _ = logger(
         ctx.serenity_context(),
         ctx.data(),
         guild_id,
         LogType::Warn,
         format!("{} forcibly unregistered <@{}>", ctx.author().name, user.id),
     )
-    .await?;
+    .await;
 
     Ok(())
 }

@@ -209,8 +209,14 @@ async fn handle_voice_state_update(
 }
 
 /// Record command usage (called from command hook)
-pub async fn record_command_usage(pool: &PgPool, data: &Data, discord_user_id: i64, guild_id: i64) {
+pub async fn record_command_usage(
+    pool: &PgPool,
+    data: &Data,
+    discord_user_id: i64,
+    guild_id: i64,
+) -> Result<(), Error> {
     increment_stat_by(pool, data, discord_user_id, guild_id, "commands_used", 1).await;
+    Ok(())
 }
 
 /// Increment a Discord stat by `by` units and immediately apply XP + event XP.
