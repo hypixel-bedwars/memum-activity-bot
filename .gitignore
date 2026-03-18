@@ -3,6 +3,8 @@
 *.db
 *.db-shm
 *.db-wal
+*.dbml
+*.log
 *nul
 nul
 /.sqlx

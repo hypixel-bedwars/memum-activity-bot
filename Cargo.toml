@@ -1,5 +1,5 @@
 [package]
-name = "memum-activity-bot"
+name = "bwd-activity-bot"
 description = "Trackes hypixel and discord stats for the BWD server"
 authors = ["VA80"]
 version = "0.1.0"

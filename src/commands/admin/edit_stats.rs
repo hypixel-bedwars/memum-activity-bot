@@ -167,7 +167,7 @@ pub async fn edit_stats(_ctx: Context<'_>) -> Result<(), Error> {
     guild_only,
     ephemeral,
     rename = "add-bedwars",
-    check = "crate::utils::permissions::admin_check"
+    required_permissions = "ADMINISTRATOR"
 )]
 pub async fn add_bedwars(
     ctx: Context<'_>,
@@ -262,7 +262,7 @@ pub async fn add_bedwars(
     guild_only,
     ephemeral,
     rename = "add-discord",
-    check = "crate::utils::permissions::admin_check"
+    required_permissions = "ADMINISTRATOR"
 )]
 pub async fn add_discord(
     ctx: Context<'_>,
@@ -337,7 +337,7 @@ pub async fn add_discord(
     guild_only,
     ephemeral,
     rename = "edit",
-    check = "crate::utils::permissions::admin_check"
+    required_permissions = "ADMINISTRATOR"
 )]
 pub async fn edit_stat(
     ctx: Context<'_>,
@@ -397,7 +397,7 @@ pub async fn edit_stat(
     slash_command,
     guild_only,
     ephemeral,
-    check = "crate::utils::permissions::admin_check"
+    required_permissions = "ADMINISTRATOR"
 )]
 pub async fn remove(
     ctx: Context<'_>,

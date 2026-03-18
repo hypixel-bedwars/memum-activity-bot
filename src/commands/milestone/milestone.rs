@@ -58,11 +58,7 @@ pub async fn milestone(_ctx: Context<'_>) -> Result<(), Error> {
 ///
 /// Creates a milestone at the given level threshold. Once added it appears on
 /// the leaderboard with a live count of how many users have reached it.
-#[poise::command(
-    slash_command,
-    ephemeral,
-    check = "crate::utils::permissions::admin_check"
-)]
+#[poise::command(slash_command, ephemeral, required_permissions = "ADMINISTRATOR")]
 pub async fn add(
     ctx: Context<'_>,
     #[description = "The level threshold for this milestone (e.g. 25, 50, 100)"] level: i32,
@@ -131,11 +127,7 @@ pub async fn add(
 ///
 /// Select the milestone you want to change via autocomplete, then supply the
 /// new level value. The milestone must not conflict with another existing one.
-#[poise::command(
-    slash_command,
-    ephemeral,
-    check = "crate::utils::permissions::admin_check"
-)]
+#[poise::command(slash_command, ephemeral, required_permissions = "ADMINISTRATOR")]
 pub async fn edit(
     ctx: Context<'_>,
     #[description = "The current milestone level to edit"]
@@ -260,11 +252,7 @@ pub async fn edit(
 ///
 /// Select the milestone to delete via autocomplete. This action cannot be
 /// undone.
-#[poise::command(
-    slash_command,
-    ephemeral,
-    check = "crate::utils::permissions::admin_check"
-)]
+#[poise::command(slash_command, ephemeral, required_permissions = "ADMINISTRATOR")]
 pub async fn remove(
     ctx: Context<'_>,
     #[description = "The milestone level to remove"]

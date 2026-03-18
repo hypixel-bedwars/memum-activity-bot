@@ -8,7 +8,7 @@ use poise::serenity_prelude::{self as serenity};
     guild_only,
     ephemeral,
     rename = "logger-set",
-    check = "crate::utils::permissions::admin_check"
+    required_permissions = "ADMINISTRATOR"
 )]
 pub async fn logger_set(
     ctx: Context<'_>,
