@@ -130,7 +130,6 @@ pub fn render(params: &StatisticsCardParams) -> Vec<u8> {
             &participants.to_string(),
             CYAN,
         );
-        next_section_y += hl_row_h;
     }
 
     // == DIVIDER =============================================================
