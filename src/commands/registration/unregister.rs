@@ -29,11 +29,9 @@ pub async fn unregister(ctx: Context<'_>) -> Result<(), Error> {
     let guild_config: GuildConfig =
         serde_json::from_value(guild_row.config_json.clone()).unwrap_or_default();
 
-    // Soft-unregister: mark inactive instead of deleting (preserves history and avoids FK issues).
-    let now = chrono::Utc::now();
-    queries::mark_user_inactive(&data.db, discord_user_id, guild_id_i64, &now).await?;
+    queries::unregister_user(&data.db, discord_user_id, guild_id_i64).await?;
 
-    info!("User {} unregistered (marked inactive)", ctx.author().id);
+    info!("User {} unregistered (Wiped)", ctx.author().id);
 
     if let Some(role_id) = guild_config.registered_role_id {
         let role = serenity::RoleId::new(role_id);
@@ -56,7 +54,8 @@ pub async fn unregister(ctx: Context<'_>) -> Result<(), Error> {
                 .description(
                     "You have been unregistered, but I couldn't find the registered role in \
                      the server. Please ask an administrator to update the configuration and \
-                     remove the role manually if desired.",
+                     remove the role manually if desired.\n\
+                     All your stats have been deleted. If you register again later, your previous stats will not be present.",
                 );
             ctx.send(poise::CreateReply::default().embed(embed)).await?;
             return Ok(());
@@ -75,8 +74,8 @@ pub async fn unregister(ctx: Context<'_>) -> Result<(), Error> {
         .color(0x00BFFF)
         .description(
             "You have been successfully unregistered.\n\
-             You are now marked as **inactive** and your stats will no longer be tracked.\n\
-             If you register again later, your previous stats will still be present.",
+             All your stats have been deleted\n\
+             If you register again later, your previous stats will not be present.",
         );
     ctx.send(poise::CreateReply::default().embed(embed)).await?;
 
