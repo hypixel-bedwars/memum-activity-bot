@@ -112,22 +112,14 @@ async fn handle_event_lb_pagination(
     let attachment = serenity::CreateAttachment::bytes(png_bytes, "event_leaderboard.png");
     let components = event_cmd::event_lb_pagination_buttons(event_id, page, total_pages);
 
-    // Defer the update so Discord doesn't show a loading spinner.
     component
         .create_response(
             ctx,
-            serenity::CreateInteractionResponse::Defer(
-                serenity::CreateInteractionResponseMessage::new(),
+            serenity::CreateInteractionResponse::UpdateMessage(
+                serenity::CreateInteractionResponseMessage::new()
+                    .add_file(attachment)
+                    .components(components),
             ),
-        )
-        .await?;
-
-    component
-        .edit_response(
-            ctx,
-            serenity::EditInteractionResponse::new()
-                .new_attachment(attachment)
-                .components(components),
         )
         .await?;
 
