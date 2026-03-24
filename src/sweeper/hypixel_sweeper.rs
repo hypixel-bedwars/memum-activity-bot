@@ -455,15 +455,18 @@ async fn apply_stat_deltas(
         }
     }
 
-    // If event XP was awarded, add it to the user's global total.
+    // Event XP is tracked separately in the event_xp table for event-specific leaderboards.
+    // It should NOT be added to the user's global total_xp to avoid double-counting.
+    // The regular XP (from guild multipliers) was already added inside the transaction above.
+    // Event leaderboards query the event_xp table directly via get_event_leaderboard().
     if total_event_xp > 0.0 {
-        if let Err(e) = queries::increment_xp(pool, user.id, total_event_xp, now).await {
-            warn!(
-                user_id = user.id,
-                error = %e,
-                "Failed to increment XP for event rewards."
-            );
-        }
+        debug!(
+            user_id = user.id,
+            event_xp = total_event_xp,
+            source = source_label,
+            "{}: Event XP awarded and recorded in event_xp table (not added to global total).",
+            source_label
+        );
     }
 
     // Milestone hook

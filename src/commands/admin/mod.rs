@@ -7,12 +7,14 @@ pub mod audit_users;
 /// Submodules:
 /// - `edit_events`: Commands for creating and managing guild events.
 /// - `edit_stats`: Commands for editing user statistics.
+/// - `recalculate_xp`: Command for recalculating user XP from source data.
 /// - `set_nickname_registration_role`: Set the role required for nickname registration.
 /// - `set_register_role`: Set the role required for registration.
 /// - `xp`: Admin commands for managing user experience points.
 pub mod edit_events;
 pub mod edit_stats;
 pub mod force_register;
+pub mod recalculate_xp;
 pub mod set_nickname_registration_role;
 pub mod set_register_role;
 pub mod xp;

@@ -482,33 +482,19 @@ async fn increment_stat_by(
         }
     };
 
-    // If event XP was earned, increment the global total and recalculate level.
-    // This is post-commit (same pattern as hypixel_sweeper) because event XP
-    // is awarded by a separate pool query that cannot run inside the TX.
+    // ----------------------------------------------------
+    // Event XP tracking (separate from global XP)
+    // ----------------------------------------------------
+    // Event XP is tracked separately in the event_xp table for event-specific leaderboards.
+    // It should NOT be added to the user's global total_xp to avoid double-counting.
+    // The regular XP (from guild multipliers) was already added inside the transaction above.
+    // Event leaderboards query the event_xp table directly via get_event_leaderboard().
     if event_xp > 0.0 {
-        if let Err(e) = queries::increment_xp(pool, user.id, event_xp, &now).await {
-            error!(error = %e, "failed incrementing event xp");
-        } else {
-            match queries::get_xp(pool, user.id).await {
-                Ok(Some(xp_row)) => {
-                    let new_level = calculate_level(
-                        xp_row.total_xp,
-                        data.config.base_level_xp,
-                        data.config.level_exponent,
-                    );
-                    if new_level != xp_row.level {
-                        if let Err(e) = queries::update_level(pool, user.id, new_level, &now).await
-                        {
-                            error!(error = %e, "failed updating level after event xp");
-                        }
-                    }
-                }
-                Ok(None) => {
-                    error!(user_id = user.id, "xp row missing after event xp increment")
-                }
-                Err(e) => error!(error = %e, "failed fetching xp row after event xp"),
-            }
-        }
+        debug!(
+            user_id = user.id,
+            event_xp,
+            "Discord activity: Event XP awarded and recorded in event_xp table (not added to global total)."
+        );
     }
 
     debug!(
