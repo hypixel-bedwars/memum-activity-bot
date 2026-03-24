@@ -88,7 +88,7 @@ pub async fn recalculate_xp(
         .fetch_one(pool)
         .await?;
 
-        let correct_total_xp = correct_regular_xp + correct_event_xp;
+        let correct_global_xp = correct_regular_xp;
 
         // Get current XP from xp table
         let current_xp_row = queries::get_xp(pool, db_user.id).await?;
@@ -98,7 +98,7 @@ pub async fn recalculate_xp(
             .unwrap_or((0.0, 1));
 
         // Calculate correction needed
-        let correction = correct_total_xp - current_total_xp;
+        let correction = correct_global_xp - current_total_xp;
 
         // Only process if there's a discrepancy
         if correction.abs() > 0.01 {
@@ -107,7 +107,7 @@ pub async fn recalculate_xp(
 
             // Calculate new level
             let new_level = calculator::calculate_level(
-                correct_total_xp,
+                correct_global_xp,
                 config.base_level_xp,
                 config.level_exponent,
             ) as i32;
@@ -117,7 +117,7 @@ pub async fn recalculate_xp(
                 "**{}**: XP: {:.1} → {:.1} (Δ{:.1}) | Lvl: {} → {} | (Regular: {:.1}, Event: {:.1})",
                 user_mention,
                 current_total_xp,
-                correct_total_xp,
+                correct_global_xp,
                 correction,
                 current_level,
                 new_level,
@@ -134,7 +134,7 @@ pub async fn recalculate_xp(
                 correct_xp = correct_regular_xp,
                 correction,
                 old_xp = current_total_xp,
-                new_xp = correct_total_xp,
+                new_xp = correct_global_xp,
                 correction,
                 regular_xp = correct_regular_xp,
                 event_xp = correct_event_xp,
@@ -151,7 +151,7 @@ pub async fn recalculate_xp(
                 sqlx::query(
                     "UPDATE xp SET total_xp = $1, level = $2, last_updated = $3 WHERE user_id = $4",
                 )
-                .bind(correct_total_xp)
+                .bind(correct_global_xp)
                 .bind(new_level)
                 .bind(&now)
                 .bind(db_user.id)
@@ -162,7 +162,7 @@ pub async fn recalculate_xp(
                     user_id = db_user.id,
                     discord_user_id = db_user.discord_user_id,
                     old_xp = current_total_xp,
-                    new_xp = correct_total_xp,
+                    new_xp = correct_global_xp,
                     correction,
                     regular_xp = correct_regular_xp,
                     event_xp = correct_event_xp,
@@ -181,7 +181,7 @@ pub async fn recalculate_xp(
                         "XP recalculated for <@{}>: {:.1} → {:.1} XP ({}), Level {} → {}",
                         db_user.discord_user_id,
                         current_total_xp,
-                        correct_total_xp,
+                        correct_global_xp,
                         if correction > 0.0 {
                             format!("+{:.1}", correction)
                         } else {
