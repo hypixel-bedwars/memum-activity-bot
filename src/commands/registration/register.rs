@@ -89,7 +89,7 @@ pub async fn perform_registration(
                 "Found Hypixel Discord social link"
             );
 
-            if linked != user_tag {
+            if linked.to_lowercase() != user_tag.to_lowercase() {
                 debug!(
                     minecraft_name = %profile.name,
                     linked_discord = %linked,
