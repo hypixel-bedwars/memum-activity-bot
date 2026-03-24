@@ -106,6 +106,7 @@ async fn handle_event_lb_pagination(
         &event.status,
         event.start_date.timestamp(),
         page,
+        None, // No display limit for user-facing command
     )
     .await?;
 

@@ -1098,6 +1098,10 @@ pub async fn persist(
     ctx: Context<'_>,
     #[autocomplete = "autocomplete_any_event_name"] event_name: Option<String>,
     #[description = "Channel to post the persistent leaderboard in"] channel: serenity::ChannelId,
+    #[description = "Number of players to display (1-50, default 20)"]
+    #[min = 1]
+    #[max = 50]
+    display_count: Option<i32>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
 
@@ -1105,6 +1109,9 @@ pub async fn persist(
         .guild_id()
         .ok_or("This command can only be used in a server.")?;
     let guild_id_i64 = guild_id.get() as i64;
+
+    // Validate and set display limit (default 20, max 50)
+    let display_limit = display_count.unwrap_or(20).clamp(1, 50) as i64;
 
     // Resolve event — use provided name or fall back to the latest event.
     let resolved_name = match event_name {
@@ -1164,8 +1171,10 @@ pub async fn persist(
 
     // Determine how many pages to post.
     let total_participants = queries::count_event_participants(&ctx.data().db, event.id).await?;
+    // Limit displayed participants to display_limit
+    let displayed_count = total_participants.min(display_limit);
     // Always show at least one page (pending / empty state).
-    let total_pages = ((total_participants as f64) / lb_helpers::PAGE_SIZE as f64)
+    let total_pages = ((displayed_count as f64) / lb_helpers::PAGE_SIZE as f64)
         .ceil()
         .max(1.0) as u32;
 
@@ -1179,6 +1188,7 @@ pub async fn persist(
             &event.status,
             event.start_date.timestamp(),
             page,
+            Some(display_limit),
         )
         .await;
 
@@ -1265,6 +1275,7 @@ pub async fn persist(
         &message_ids_json,
         status_message_id,
         milestone_message_id,
+        display_limit as i32,
         &now,
         &now,
     )

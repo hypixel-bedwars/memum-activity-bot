@@ -2219,23 +2219,25 @@ pub async fn upsert_persistent_event_leaderboard(
     message_ids: &serde_json::Value,
     status_message_id: i64,
     milestone_message_id: i64,
+    display_count: i32,
     created_at: &DateTime<Utc>,
     last_updated: &DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
     debug!(
-        "queries::upsert_persistent_event_leaderboard: event_id={}, guild_id={}, channel_id={}, milestone_message_id={}",
-        event_id, guild_id, channel_id, milestone_message_id
+        "queries::upsert_persistent_event_leaderboard: event_id={}, guild_id={}, channel_id={}, milestone_message_id={}, display_count={}",
+        event_id, guild_id, channel_id, milestone_message_id, display_count
     );
     sqlx::query(
         "INSERT INTO persistent_event_leaderboards
-         (event_id, guild_id, channel_id, message_ids, status_message_id, milestone_message_id, created_at, last_updated)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (event_id, guild_id, channel_id, message_ids, status_message_id, milestone_message_id, display_count, created_at, last_updated)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT(event_id) DO UPDATE SET
              guild_id = excluded.guild_id,
              channel_id = excluded.channel_id,
              message_ids = excluded.message_ids,
              status_message_id = excluded.status_message_id,
              milestone_message_id = excluded.milestone_message_id,
+             display_count = excluded.display_count,
              created_at = excluded.created_at,
              last_updated = excluded.last_updated",
     )
@@ -2245,6 +2247,7 @@ pub async fn upsert_persistent_event_leaderboard(
     .bind(message_ids)
     .bind(status_message_id)
     .bind(milestone_message_id)
+    .bind(display_count)
     .bind(created_at)
     .bind(last_updated)
     .execute(pool)

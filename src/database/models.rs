@@ -377,6 +377,9 @@ pub struct DbPersistentEventLeaderboard {
     /// Discord message ID of the standalone event milestone card message.
     /// `0` means no milestone message has been sent yet.
     pub milestone_message_id: i64,
+    /// Number of players to display on the leaderboard (1-50).
+    /// Defaults to 20 (2 pages at 10 per page).
+    pub display_count: i32,
     pub created_at: DateTime<Utc>,
     pub last_updated: DateTime<Utc>,
 }

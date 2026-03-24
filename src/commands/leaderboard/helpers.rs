@@ -85,6 +85,7 @@ pub async fn generate_leaderboard_page(
         title: None,
         show_level: true,
         custom_empty_message: None,
+        display_limit: None, // Regular leaderboard shows all users
     };
 
     let png_bytes = leaderboard_card::render(&params);
@@ -105,9 +106,14 @@ pub async fn generate_event_leaderboard_page(
     event_status: &str,
     event_start_ts: i64,
     page: u32,
+    display_limit: Option<i64>,
 ) -> Result<(Vec<u8>, u32), Box<dyn std::error::Error + Send + Sync>> {
     let total_participants = queries::count_event_participants(pool, event_id).await?;
-    let total_pages = ((total_participants as f64) / PAGE_SIZE as f64)
+    // Apply display limit if provided
+    let effective_count = display_limit
+        .map(|limit| total_participants.min(limit))
+        .unwrap_or(total_participants);
+    let total_pages = ((effective_count as f64) / PAGE_SIZE as f64)
         .ceil()
         .max(1.0) as u32;
 
@@ -187,9 +193,15 @@ pub async fn generate_event_leaderboard_page(
         rows,
         page: clamped_page,
         total_pages,
-        title: Some(event_name.to_string()),
+        // Only show title on first page
+        title: if clamped_page == 1 {
+            Some(event_name.to_string())
+        } else {
+            None
+        },
         show_level: false,
         custom_empty_message,
+        display_limit,
     };
 
     let png_bytes = leaderboard_card::render(&params);

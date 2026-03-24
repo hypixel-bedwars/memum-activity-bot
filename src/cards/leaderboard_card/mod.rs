@@ -103,6 +103,8 @@ pub struct LeaderboardCardParams {
     /// Override the empty-state message (shown when `rows` is empty).
     /// Falls back to `"No players to display"` when `None`.
     pub custom_empty_message: Option<String>,
+    /// Optional display limit for dynamic header text (e.g., "TOP 20").
+    pub display_limit: Option<i64>,
 }
 
 /// Parameters for rendering a standalone milestone card.
@@ -158,12 +160,21 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
     // == COLUMN HEADERS =======================================================
     let col_header_y = header_y + 10;
 
-    let text = "Top 10";
+    // Dynamic header: "TOP {count}" on page 1 only, nothing on other pages
+    if params.page == 1 {
+        let text = if let Some(limit) = params.display_limit {
+            format!("TOP {}", limit)
+        } else {
+            "Top 10".to_string()
+        };
 
-    font.render_formatted(&mut img, rank_column_x, header_y, text, 5, GOLD);
-    font.render_formatted(&mut img, rank_column_x + 1, header_y, text, 5, GOLD);
-    font.render_formatted(&mut img, rank_column_x - 1, header_y, text, 5, GOLD);
-    font.render_formatted(&mut img, rank_column_x, header_y + 1, text, 5, GOLD);
+        // Bold rendering (multiple passes for thickness)
+        font.render_formatted(&mut img, rank_column_x, header_y, &text, 5, GOLD);
+        font.render_formatted(&mut img, rank_column_x + 1, header_y, &text, 5, GOLD);
+        font.render_formatted(&mut img, rank_column_x - 1, header_y, &text, 5, GOLD);
+        font.render_formatted(&mut img, rank_column_x, header_y + 1, &text, 5, GOLD);
+    }
+    // Pages 2+ show no header at all
 
     // == ROWS =================================================================
     let rows_start_y = col_header_y + 32;

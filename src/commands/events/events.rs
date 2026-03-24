@@ -186,6 +186,7 @@ pub async fn leaderboard(
         &event.status,
         event.start_date.timestamp(),
         page,
+        None, // No display limit for user-facing command
     )
     .await?;
 

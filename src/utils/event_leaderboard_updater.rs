@@ -137,9 +137,13 @@ async fn update_single_event_leaderboard(
     let channel = serenity::ChannelId::new(record.channel_id as u64);
     let msg_ids: Vec<u64> = serde_json::from_value(record.message_ids.clone()).unwrap_or_default();
 
-    // Determine how many pages to render.
+    // Get the display limit from the record (number of players to show)
+    let display_limit = record.display_count as i64;
+
+    // Determine how many pages to render based on display_count.
     let total_participants = queries::count_event_participants(pool, record.event_id).await?;
-    let total_pages = ((total_participants as f64) / helpers::PAGE_SIZE as f64)
+    let displayed_count = total_participants.min(display_limit);
+    let total_pages = ((displayed_count as f64) / helpers::PAGE_SIZE as f64)
         .ceil()
         .max(1.0) as u32;
 
@@ -157,6 +161,7 @@ async fn update_single_event_leaderboard(
             &event.status,
             event.start_date.timestamp(),
             page,
+            Some(display_limit),
         )
         .await;
 
