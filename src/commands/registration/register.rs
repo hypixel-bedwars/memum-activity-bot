@@ -58,11 +58,18 @@ pub async fn perform_registration(
 
     debug!(minecraft_username = %minecraft_username, "Resolving Minecraft username");
 
-    let profile = data
-        .hypixel
-        .resolve_username(minecraft_username)
-        .await
-        .map_err(|e| format!("Could not resolve Minecraft username: {e}"))?;
+    let profile = match data.hypixel.resolve_username(minecraft_username).await {
+        Ok(p) => p,
+        Err(_e) => {
+            return Ok((
+                format!(
+                    "Minecraft user '{}' was not found. Please check your username.",
+                    minecraft_username
+                ),
+                None,
+            ));
+        }
+    };
 
     debug!(
         minecraft_name = %profile.name,
