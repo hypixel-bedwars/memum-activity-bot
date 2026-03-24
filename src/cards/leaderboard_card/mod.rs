@@ -208,7 +208,7 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         } else if row.rank == 3 {
             BRONZE
         } else {
-            MUTED
+            RANK_GREEN
         };
 
         let rank_str = format!("#{}", row.rank);
