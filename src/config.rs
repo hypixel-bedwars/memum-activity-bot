@@ -4,10 +4,11 @@
 /// - `GuildConfig` is stored as JSON in the `guilds` table and can be modified
 ///   at runtime by server admins. It controls which stats contribute to XP
 ///   and how much XP each stat awards.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 
 use serde::{Deserialize, Serialize};
+use serenity::all::UserId;
 
 /// Top-level configuration sourced from environment variables.
 ///
@@ -62,6 +63,8 @@ pub struct AppConfig {
     pub hypixel_refresh_cooldown_seconds: u64,
 
     pub enable_hypixel_sweeper: bool,
+
+    pub owners: HashSet<UserId>,
 }
 
 impl AppConfig {
@@ -120,6 +123,12 @@ impl AppConfig {
                 .unwrap_or_else(|_| "false".to_string())
                 .parse()
                 .expect("ENABLE_HYPIXEL_SWEEPER must be a valid bool"),
+            owners: env::var("OWNERS")
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(|s| s.trim().parse::<u64>().ok())
+                .map(UserId::new)
+                .collect(),
         }
     }
 }

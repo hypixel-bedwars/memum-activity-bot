@@ -80,8 +80,11 @@ pub async fn build(config: AppConfig, db: PgPool) -> Result<poise::Framework<Dat
                 })
             },
 
+            owners: config.owners.iter().cloned().collect(),
+
             ..Default::default()
         })
+        .initialize_owners(false)
         .setup(move |ctx, _ready, framework| {
             Box::pin(async move {
                 info!("Bot is connected and ready!");
