@@ -33,8 +33,8 @@ async fn autocomplete_event_name<'a>(
     slash_command,
     guild_only,
     ephemeral,
-    required_permissions = "ADMINISTRATOR",
-    default_member_permissions = "ADMINISTRATOR"
+    required_permissions = "BAN_MEMBERS",
+    default_member_permissions = "BAN_MEMBERS"
 )]
 pub async fn disqualify(
     ctx: Context<'_>,
@@ -173,8 +173,8 @@ pub async fn disqualify(
     slash_command,
     guild_only,
     ephemeral,
-    required_permissions = "ADMINISTRATOR",
-    default_member_permissions = "ADMINISTRATOR"
+    required_permissions = "BAN_MEMBERS",
+    default_member_permissions = "BAN_MEMBERS"
 )]
 pub async fn undisqualify(
     ctx: Context<'_>,

@@ -229,6 +229,7 @@ pub async fn level(
         hypixel_rank: db_user.hypixel_rank.clone(),
         hypixel_rank_plus_color: db_user.hypixel_rank_plus_color.clone(),
         event_mode: false,
+        is_disqualified: false,
     };
 
     let png_bytes = level_card::render(&params);

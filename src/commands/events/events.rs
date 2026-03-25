@@ -1,3 +1,4 @@
+use chrono::Utc;
 /// `/event` and `/edit-event` command groups.
 ///
 /// Public commands:
@@ -357,6 +358,16 @@ pub async fn level(
         },
     };
 
+    let globally_banned = db_user
+        .event_ban_until
+        .map(|t| t > Utc::now())
+        .unwrap_or(false);
+
+    let event_dq =
+        queries::is_user_disqualified_from_event(&ctx.data().db, event.id, db_user.id).await?;
+
+    let is_disqualified = globally_banned || event_dq;
+
     // Build card params — reuse the level card with event-specific data:
     //   level             = 0   (not applicable for events; hides level display)
     //   xp_this_level     = 0.0 (progress bar will be empty)
@@ -379,6 +390,7 @@ pub async fn level(
         hypixel_rank: db_user.hypixel_rank.clone(),
         hypixel_rank_plus_color: db_user.hypixel_rank_plus_color.clone(),
         event_mode: true,
+        is_disqualified,
     };
 
     let png_bytes = level_card::render(&params);

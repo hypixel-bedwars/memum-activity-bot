@@ -23,6 +23,7 @@ const GREEN: Rgba<u8> = Rgba([0x44, 0xff, 0x88, 0xff]);
 const GOLD: Rgba<u8> = Rgba([0xff, 0xd7, 0x00, 0xff]);
 const BAR_BG: Rgba<u8> = Rgba([0x2a, 0x2a, 0x4a, 0xff]);
 const DIVIDER: Rgba<u8> = Rgba([0x30, 0x30, 0x50, 0xff]);
+const RED: Rgba<u8> = Rgba([0xff, 0x44, 0x44, 0xff]);
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -58,6 +59,8 @@ pub struct LevelCardParams {
     /// - The XP progress bar is replaced with a "TOTAL EVENT XP: N" label.
     /// - The "MILESTONES" section is hidden.
     pub event_mode: bool,
+
+    pub is_disqualified: bool,
 }
 
 /// Render the level card and return the PNG bytes.
@@ -176,14 +179,18 @@ pub fn render(params: &LevelCardParams) -> Vec<u8> {
     );
 
     if !params.event_mode {
-        font.render_text(
-            &mut img,
-            124,
-            62,
-            &format!("LEVEL {}", params.level),
-            2,
-            CYAN,
-        );
+        if params.is_disqualified {
+            font.render_text(&mut img, 124, 62, "DISQUALIFIED", 2, RED);
+        } else {
+            font.render_text(
+                &mut img,
+                124,
+                62,
+                &format!("LEVEL {}", params.level),
+                2,
+                CYAN,
+            );
+        }
     }
 
     let rank_colour = if let Some(rank) = params.rank {
