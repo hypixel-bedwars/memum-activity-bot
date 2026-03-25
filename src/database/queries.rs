@@ -3237,3 +3237,62 @@ pub async fn get_event_participant_for_active_event(
     .fetch_optional(pool)
     .await
 }
+
+pub async fn remove_global_event_ban(pool: &PgPool, user_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE users
+         SET event_ban_until = NULL,
+             event_ban_reason = NULL
+         WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn is_user_disqualified_in_any_active_event(
+    pool: &PgPool,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let exists: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT 1
+        FROM event_participants ep
+        JOIN events e ON e.id = ep.event_id
+        WHERE ep.user_id = $1
+          AND ep.disqualified = TRUE
+          AND e.guild_id = $2
+          AND e.status = 'active'
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .bind(guild_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(exists.is_some())
+}
+
+pub async fn is_user_disqualified_from_event(
+    pool: &PgPool,
+    event_id: i64,
+    user_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1
+         FROM event_participants
+         WHERE event_id = $1
+           AND user_id = $2
+           AND disqualified = TRUE
+         LIMIT 1",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(exists.is_some())
+}

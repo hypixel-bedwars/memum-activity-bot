@@ -29,13 +29,6 @@ async fn autocomplete_event_name<'a>(
         .collect()
 }
 
-/// Disqualify a user globally (temporary event ban) or for a specific event.
-///
-/// Usage:
-/// - Global ban:  /admin disqualify user:<user> duration:<days> reason:<optional>
-/// - Event DQ:    /admin disqualify user:<user> event:<event_id> reason:<optional>
-///
-/// Exactly one of `duration` or `event` must be provided.
 #[poise::command(
     slash_command,
     guild_only,
@@ -45,14 +38,10 @@ async fn autocomplete_event_name<'a>(
 )]
 pub async fn disqualify(
     ctx: Context<'_>,
-    #[description = "User to disqualify"] user: serenity::User,
-    #[description = "Global ban duration in days (mutually exclusive with event)"] duration: Option<
-        i64,
-    >,
-    #[autocomplete = "autocomplete_event_name"]
-    #[description = "Event ID to disqualify the user from (mutually exclusive with duration)"]
+    user: serenity::User,
+    duration: Option<i64>,
     event: Option<i64>,
-    #[description = "Optional reason"] reason: Option<String>,
+    reason: Option<String>,
 ) -> Result<(), Error> {
     let guild_id = ctx
         .guild_id()
@@ -68,16 +57,14 @@ pub async fn disqualify(
             return Ok(());
         }
         (None, None) => {
-            ctx.say(
-                "You must provide either a `duration` (global ban) or an `event` to disqualify.",
-            )
-            .await?;
+            ctx.say("You must provide either a `duration` or an `event`.")
+                .await?;
             return Ok(());
         }
         _ => {}
     }
 
-    // Load user (even if inactive) to allow banning/disqualifying
+    // Load user
     let db_user = queries::get_user_by_discord_id_any(pool, user.id.get() as i64, guild_i64)
         .await?
         .ok_or("User is not registered in this guild")?;
@@ -90,24 +77,17 @@ pub async fn disqualify(
         }
 
         let ban_until = Utc::now() + Duration::days(days);
+
         queries::ban_user_from_events(pool, db_user.id, days, reason.as_deref()).await?;
 
         let embed = CreateEmbed::new()
             .title("Global Event Ban Applied")
-            .description({
-                let duration_suffix = if days == 1 {
-                    " (1 day)".to_string()
-                } else {
-                    format!(" ({} days)", days)
-                };
-                format!(
-                    "User <@{}> is banned from **all events** until <t:{}:F>{}.\nReason: {}",
-                    user.id,
-                    ban_until.timestamp(),
-                    duration_suffix,
-                    reason.as_deref().unwrap_or("No reason provided.")
-                )
-            })
+            .description(format!(
+                "User <@{}> is banned from **all events** until <t:{}:F>.\nReason: {}",
+                user.id,
+                ban_until.timestamp(),
+                reason.as_deref().unwrap_or("No reason provided.")
+            ))
             .color(0xFF0000);
 
         ctx.send(poise::CreateReply::default().embed(embed)).await?;
@@ -116,7 +96,6 @@ pub async fn disqualify(
             admin = %ctx.author().name,
             target = %user.id,
             duration_days = days,
-            reason = reason.as_deref().unwrap_or(""),
             "Applied global event ban"
         );
 
@@ -126,34 +105,39 @@ pub async fn disqualify(
             guild_id,
             LogType::Warn,
             format!(
-                "{} applied global event ban to <@{}> for {} day(s). Reason: {}",
+                "{} globally banned <@{}> for {} day(s)",
                 ctx.author().name,
                 user.id,
-                days,
-                reason.as_deref().unwrap_or("No reason provided.")
+                days
             ),
         )
         .await?;
     } else if let Some(event_id) = event {
-        // Ensure event exists and belongs to this guild
         let event_row = queries::get_event_by_id(pool, event_id)
             .await?
             .ok_or("Event not found")?;
+
         if event_row.guild_id != guild_i64 {
             ctx.say("That event does not belong to this guild.").await?;
             return Ok(());
         }
 
-        // Upsert participant row and mark disqualified
+        let already = queries::is_user_disqualified_from_event(pool, event_id, db_user.id).await?;
+
+        if already {
+            ctx.say("User is already disqualified from this event.")
+                .await?;
+            return Ok(());
+        }
+
         queries::disqualify_user_from_event(pool, event_id, db_user.id).await?;
 
         let embed = CreateEmbed::new()
             .title("Event Disqualification Applied")
             .description(format!(
-                "User <@{}> has been disqualified from event **{}** (ID: {}).\nReason: {}",
+                "User <@{}> has been disqualified from **{}**.\nReason: {}",
                 user.id,
                 event_row.name,
-                event_row.id,
                 reason.as_deref().unwrap_or("No reason provided.")
             ))
             .color(0xFFA500);
@@ -164,8 +148,7 @@ pub async fn disqualify(
             admin = %ctx.author().name,
             target = %user.id,
             event_id = event_row.id,
-            reason = reason.as_deref().unwrap_or(""),
-            "Applied event-specific disqualification"
+            "Applied event DQ"
         );
 
         logger(
@@ -174,16 +157,74 @@ pub async fn disqualify(
             guild_id,
             LogType::Warn,
             format!(
-                "{} disqualified <@{}> from event '{}' (ID: {}). Reason: {}",
+                "{} disqualified <@{}> from event {}",
                 ctx.author().name,
                 user.id,
-                event_row.name,
-                event_row.id,
-                reason.as_deref().unwrap_or("No reason provided.")
+                event_row.name
             ),
         )
         .await?;
     }
+
+    Ok(())
+}
+
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    required_permissions = "ADMINISTRATOR",
+    default_member_permissions = "ADMINISTRATOR"
+)]
+pub async fn undisqualify(
+    ctx: Context<'_>,
+    #[description = "User to re-qualify"] user: serenity::User,
+    #[autocomplete = "autocomplete_event_name"]
+    #[description = "Event ID (leave empty to remove global ban)"]
+    event: Option<i64>,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().ok_or("Must be in a server")?;
+    let guild_i64 = guild_id.get() as i64;
+    let pool = &ctx.data().db;
+
+    let db_user = queries::get_user_by_discord_id_any(pool, user.id.get() as i64, guild_i64)
+        .await?
+        .ok_or("User not found")?;
+
+    if let Some(event_id) = event {
+        queries::requalify_user_for_event(pool, event_id, db_user.id).await?;
+
+        let embed = CreateEmbed::new()
+            .title("Event Requalification")
+            .description(format!(
+                "<@{}> is no longer disqualified from event {}.",
+                user.id, event_id
+            ))
+            .color(0x00FF00);
+
+        ctx.send(poise::CreateReply::default().embed(embed)).await?;
+    } else {
+        queries::remove_global_event_ban(pool, db_user.id).await?;
+
+        let embed = CreateEmbed::new()
+            .title("Global Ban Removed")
+            .description(format!(
+                "<@{}> can now participate in events again.",
+                user.id
+            ))
+            .color(0x00FF00);
+
+        ctx.send(poise::CreateReply::default().embed(embed)).await?;
+    }
+
+    logger(
+        ctx.serenity_context(),
+        ctx.data(),
+        guild_id,
+        LogType::Info,
+        format!("{} undisqualified <@{}>", ctx.author().name, user.id),
+    )
+    .await?;
 
     Ok(())
 }
