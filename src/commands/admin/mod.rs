@@ -1,4 +1,5 @@
 pub mod audit_users;
+pub mod disqualify;
 /// Admin command modules.
 ///
 /// This module contains commands and utilities restricted to server administrators.

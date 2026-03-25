@@ -273,6 +273,14 @@ async fn increment_stat_by(
         return;
     }
 
+    if user.event_ban_until.map(|t| t > now).unwrap_or(false) {
+        debug!(
+            user_id = user.id,
+            "Skipping XP + event XP — user is globally banned."
+        );
+        return;
+    }
+
     // ----------------------------------------------------
     // Build stat delta and check whether it yields any XP before opening
     // a transaction — avoids a no-op transaction for untracked stats

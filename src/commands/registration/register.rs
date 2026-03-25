@@ -3,7 +3,6 @@
 /// Links a Discord user to their Minecraft account by resolving the username
 /// to a UUID via the Mojang API, storing the mapping in the database, and
 /// assigning the guild's configured registered role.
-use time::OffsetDateTime;
 use tracing::{debug, error, info};
 
 use poise::serenity_prelude::{self as serenity, CreateEmbed};
@@ -376,12 +375,8 @@ pub async fn fetch_and_cache_head_texture(
     let data_url = format!("data:image/png;base64,{}", b64);
 
     // store in DB
-    let updated_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .ok();
-    if let Some(ts) = updated_at {
-        let _ = queries::set_user_head_texture(pool, user_id, &data_url, &ts).await;
-    }
+    let updated_at = chrono::Utc::now();
+    let _ = queries::set_user_head_texture(pool, user_id, &data_url, &updated_at).await;
 
     Some(data_url)
 }

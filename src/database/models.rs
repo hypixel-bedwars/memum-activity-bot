@@ -90,6 +90,9 @@ pub struct DbUser {
 
     // when the user left the guild (optional)
     pub left_at: Option<DateTime<Utc>>,
+
+    pub event_ban_until: Option<DateTime<Utc>>,
+    pub event_ban_reason: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +312,26 @@ pub struct EventParticipant {
     pub user_id: i64,
     /// Optional Minecraft username for nicer ordering/display
     pub minecraft_username: Option<String>,
+}
+
+/// A row from the `event_participants` table.
+#[derive(Debug, Clone, FromRow)]
+pub struct DbEventParticipant {
+    pub event_id: i64,
+    pub user_id: i64,
+    pub disqualified: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Unified participation rule: user must be active, not globally banned,
+/// and not disqualified for the event. Treat missing participant rows as eligible.
+pub fn can_user_participate_in_event(
+    user: &DbUser,
+    participant: Option<&DbEventParticipant>,
+) -> bool {
+    user.active
+        && (user.event_ban_until.map(|t| t < Utc::now()).unwrap_or(true))
+        && participant.map(|p| !p.disqualified).unwrap_or(true)
 }
 
 // ---------------------------------------------------------------------------

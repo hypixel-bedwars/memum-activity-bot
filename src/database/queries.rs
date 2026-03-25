@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::database::models::DbEventParticipant;
+
 use super::models::{
     BackfillSummary, DbDailySnapshot, DbEvent, DbEventMilestone, DbEventStat, DbEventStatusMessage,
     DbGuild, DbMilestone, DbPersistentEventLeaderboard, DbPersistentLeaderboard, DbStatDelta,
@@ -181,7 +183,7 @@ pub async fn get_hypixel_snapshot_before(
     pool: &PgPool,
     user_id: i64,
     stat_name: &str,
-    before_ts: &str,
+    before_ts: &DateTime<Utc>,
 ) -> Result<Option<DbStatsSnapshot>, sqlx::Error> {
     debug!(
         "queries::get_hypixel_snapshot_before: user_id={}, stat_name={}, before_ts={}",
@@ -455,7 +457,7 @@ pub async fn set_user_head_texture(
     pool: &PgPool,
     user_id: i64,
     head_texture: &str,
-    updated_at: &str,
+    updated_at: &DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
     debug!(
         "queries::set_user_head_texture: user_id={}, head_texture_len={}, updated_at={}",
@@ -547,6 +549,7 @@ pub async fn get_all_users_in_guild(
 }
 
 /// Get the rank of a user within their guild, based on total XP. Returns `None` if the user is not registered or has no XP record.
+/// Inactive users are excluded so ranks reflect only active members.
 pub async fn get_user_rank_in_guild(
     pool: &PgPool,
     user_id: i64,
@@ -561,7 +564,7 @@ pub async fn get_user_rank_in_guild(
 			 SELECT u.id AS user_id, RANK() OVER (ORDER BY COALESCE(x.total_xp, 0) DESC) AS rank
 			 FROM users u
 			 LEFT JOIN xp x ON x.user_id = u.id
-			 WHERE u.guild_id = $1
+			 WHERE u.guild_id = $1 AND u.active = TRUE
 		 ) sub
 		 WHERE user_id = $2",
     )
@@ -957,10 +960,14 @@ pub async fn get_leaderboard(
 /// Count the total number of registered users in a guild (for pagination math).
 pub async fn count_users_in_guild(pool: &PgPool, guild_id: i64) -> Result<i64, sqlx::Error> {
     debug!("queries::count_users_in_guild: guild_id={}", guild_id);
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE guild_id = $1")
-        .bind(guild_id)
-        .fetch_one(pool)
-        .await
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+    FROM users
+    WHERE guild_id = $1 AND active = TRUE",
+    )
+    .bind(guild_id)
+    .fetch_one(pool)
+    .await
 }
 
 // =========================================================================
@@ -1304,7 +1311,7 @@ pub async fn get_milestones_with_counts(
         "SELECT m.id, m.guild_id, m.level,
                 COUNT(x.user_id) AS user_count
          FROM milestones m
-         LEFT JOIN users u ON u.guild_id = m.guild_id
+         LEFT JOIN users u ON u.guild_id = m.guild_id AND u.active = TRUE
          LEFT JOIN xp x ON x.user_id = u.id AND x.level >= m.level
          WHERE m.guild_id = $1
          GROUP BY m.id
@@ -1894,11 +1901,17 @@ pub async fn get_event_participants(
 
     sqlx::query_as::<_, EventParticipant>(
         "SELECT DISTINCT u.discord_user_id AS user_id,
-                u.minecraft_username
-         FROM event_xp ex
-         JOIN users u ON u.id = ex.user_id
-         WHERE ex.event_id = $1
-         ORDER BY u.minecraft_username NULLS LAST, u.discord_user_id",
+               u.minecraft_username
+        FROM event_xp ex
+        JOIN users u ON u.id = ex.user_id
+        LEFT JOIN event_participants ep
+            ON ep.event_id = ex.event_id
+           AND ep.user_id = ex.user_id
+        WHERE ex.event_id = $1
+          AND u.active = TRUE
+          AND (u.event_ban_until IS NULL OR u.event_ban_until < NOW())
+          AND COALESCE(ep.disqualified, FALSE) = FALSE
+        ORDER BY u.minecraft_username NULLS LAST, u.discord_user_id",
     )
     .bind(event_id)
     .fetch_all(pool)
@@ -1929,54 +1942,55 @@ pub async fn award_event_xp_for_delta(
         guild_id, user_id, stat_name, delta_id, difference
     );
 
-    // Find all active events for this guild that include this stat.
-    let stats: Vec<DbEventStat> = sqlx::query_as::<_, DbEventStat>(
-        "SELECT es.*
-         FROM event_stats es
-         JOIN events e ON e.id = es.event_id
-         WHERE e.guild_id = $1
-           AND e.status = 'active'
-           AND es.stat_name = $2",
-    )
-    .bind(guild_id)
-    .bind(stat_name)
-    .fetch_all(pool)
-    .await?;
-
-    if stats.is_empty() {
-        return Ok(0.0);
-    }
-
     let units = difference;
     if units <= 0 {
         return Ok(0.0);
     }
 
-    let mut total_xp = 0.0_f64;
+    // Single guarded insert-select to enforce:
+    // - event active for guild and stat
+    // - user active
+    // - not globally banned
+    // - not disqualified for the event
+    let rows: Vec<(f64,)> = sqlx::query_as(
+        r#"
+        INSERT INTO event_xp (event_id, user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
+        SELECT es.event_id,
+               $2 AS user_id,
+               es.stat_name,
+               $4 AS delta_id,
+               $5 AS units,
+               es.xp_per_unit,
+               es.xp_per_unit * $5::DOUBLE PRECISION AS xp_earned,
+               $6 AS created_at
+        FROM event_stats es
+        JOIN events e ON e.id = es.event_id
+        JOIN users u ON u.id = $2 AND u.guild_id = $1
+        LEFT JOIN event_participants ep
+               ON ep.event_id = es.event_id
+              AND ep.user_id = $2
+        WHERE e.guild_id = $1
+          AND e.status = 'active'
+          AND e.start_date <= $6
+          AND e.end_date > $6
+          AND es.stat_name = $3
+          AND u.active = TRUE
+          AND (u.event_ban_until IS NULL OR u.event_ban_until < $6)
+          AND COALESCE(ep.disqualified, FALSE) = FALSE
+        ON CONFLICT (event_id, delta_id) DO NOTHING
+        RETURNING xp_earned
+        "#,
+    )
+    .bind(guild_id)
+    .bind(user_id)
+    .bind(stat_name)
+    .bind(delta_id)
+    .bind(units)
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
 
-    for es in &stats {
-        let xp_earned = es.xp_per_unit * (units as f64);
-
-        sqlx::query(
-            "INSERT INTO event_xp
-                 (event_id, user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (event_id, delta_id) DO NOTHING",
-        )
-        .bind(es.event_id)
-        .bind(user_id)
-        .bind(stat_name)
-        .bind(delta_id)
-        .bind(units)
-        .bind(es.xp_per_unit)
-        .bind(xp_earned)
-        .bind(now)
-        .execute(pool)
-        .await?;
-
-        total_xp += xp_earned;
-    }
-
+    let total_xp: f64 = rows.into_iter().map(|(xp,)| xp).sum();
     Ok(total_xp)
 }
 
@@ -1996,24 +2010,6 @@ pub async fn award_admin_event_xp(
         guild_id, user_id, amount
     );
 
-    // Find all active events for this guild.
-    let active_events: Vec<i64> =
-        sqlx::query_scalar("SELECT id FROM events WHERE guild_id = $1 AND status = 'active'")
-            .bind(guild_id)
-            .fetch_all(pool)
-            .await?;
-
-    if active_events.is_empty() {
-        debug!("No active events for guild {}", guild_id);
-        return Ok(0.0);
-    } else {
-        debug!(
-            "Found {} active events for guild {}",
-            active_events.len(),
-            guild_id
-        );
-    }
-
     // Insert a stat_delta for this admin action
     let delta_id = insert_stat_delta(
         pool, user_id, "admin_xp", 0,      // old_value
@@ -2023,27 +2019,42 @@ pub async fn award_admin_event_xp(
     )
     .await?;
 
-    let mut total_xp = 0.0;
+    // Guarded insert-select across all active events for this guild where the user is eligible.
+    let rows: Vec<(f64,)> = sqlx::query_as(
+        r#"
+        INSERT INTO event_xp (event_id, user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
+        SELECT e.id,
+               $2 AS user_id,
+               $3 AS stat_name,
+               $4 AS delta_id,
+               1 AS units,
+               $5::DOUBLE PRECISION AS xp_per_unit,
+               $5::DOUBLE PRECISION AS xp_earned,
+               $6 AS created_at
+        FROM events e
+        JOIN users u ON u.id = $2
+        LEFT JOIN event_participants ep
+               ON ep.event_id = e.id
+              AND ep.user_id = u.id
+        WHERE e.guild_id = $1
+          AND e.status = 'active'
+          AND u.active = TRUE
+          AND (u.event_ban_until IS NULL OR u.event_ban_until < $6)
+          AND COALESCE(ep.disqualified, FALSE) = FALSE
+        ON CONFLICT (event_id, delta_id) DO NOTHING
+        RETURNING xp_earned
+        "#,
+    )
+    .bind(guild_id)
+    .bind(user_id)
+    .bind("admin_xp")
+    .bind(delta_id)
+    .bind(amount as f64)
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
 
-    for event_id in &active_events {
-        sqlx::query(
-            "INSERT INTO event_xp
-                 (event_id, user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-        )
-        .bind(event_id)
-        .bind(user_id)
-        .bind("admin_xp")
-        .bind(delta_id)
-        .bind(1) // units
-        .bind(amount as f64) // xp_per_unit
-        .bind(amount as f64) // xp_earned
-        .bind(now)
-        .execute(pool)
-        .await?;
-
-        total_xp += amount as f64;
-    }
+    let total_xp: f64 = rows.into_iter().map(|(xp,)| xp).sum();
 
     debug!("Awarded {} total event XP for admin action", total_xp);
 
@@ -2061,21 +2072,39 @@ pub async fn get_event_leaderboard(
         "queries::get_event_leaderboard: event_id={}, limit={}, offset={}",
         event_id, limit, offset
     );
+
     sqlx::query_as::<_, EventLeaderboardEntry>(
-        "SELECT u.discord_user_id,
-                u.minecraft_username,
-                u.minecraft_uuid,
-                u.hypixel_rank,
-                u.hypixel_rank_plus_color,
-                COALESCE(SUM(ex.xp_earned), 0.0) AS total_event_xp
-         FROM event_xp ex
-         JOIN users u ON u.id = ex.user_id
-         WHERE ex.event_id = $1
-           AND u.active = TRUE
-         GROUP BY u.discord_user_id, u.minecraft_username, u.minecraft_uuid,
-                  u.hypixel_rank, u.hypixel_rank_plus_color
-         ORDER BY total_event_xp DESC
-         LIMIT $2 OFFSET $3",
+        r#"
+        SELECT
+            u.discord_user_id,
+            u.minecraft_username,
+            u.minecraft_uuid,
+            u.hypixel_rank,
+            u.hypixel_rank_plus_color,
+            COALESCE(SUM(ex.xp_earned), 0.0) AS total_event_xp
+        FROM event_xp ex
+        JOIN users u ON u.id = ex.user_id
+        JOIN events e ON e.id = ex.event_id
+        LEFT JOIN event_participants ep
+            ON ep.event_id = ex.event_id
+           AND ep.user_id = ex.user_id
+        WHERE ex.event_id = $1
+          AND e.id = $1
+          AND u.active = TRUE
+          AND (u.event_ban_until IS NULL OR u.event_ban_until < NOW())
+          AND COALESCE(ep.disqualified, FALSE) = FALSE
+        GROUP BY
+            u.discord_user_id,
+            u.minecraft_username,
+            u.minecraft_uuid,
+            u.hypixel_rank,
+            u.hypixel_rank_plus_color,
+            u.id
+        ORDER BY
+            total_event_xp DESC,
+            u.id ASC 
+        LIMIT $2 OFFSET $3
+        "#,
     )
     .bind(event_id)
     .bind(limit)
@@ -2095,10 +2124,18 @@ pub async fn get_user_event_stats(
         event_id, user_id
     );
     let rows = sqlx::query_as::<_, (String, f64, i64)>(
-        "SELECT stat_name, COALESCE(SUM(xp_earned), 0.0) AS total_xp, COALESCE(SUM(units), 0)::BIGINT AS total_units
-         FROM event_xp
-         WHERE event_id = $1 AND user_id = $2
-         GROUP BY stat_name
+        "SELECT ex.stat_name, COALESCE(SUM(ex.xp_earned), 0.0) AS total_xp, COALESCE(SUM(ex.units), 0)::BIGINT AS total_units
+         FROM event_xp ex
+         JOIN users u ON u.id = ex.user_id
+         LEFT JOIN event_participants ep
+           ON ep.event_id = ex.event_id
+          AND ep.user_id = ex.user_id
+         WHERE ex.event_id = $1
+           AND ex.user_id = $2
+           AND u.active = TRUE
+           AND (u.event_ban_until IS NULL OR u.event_ban_until < NOW())
+           AND COALESCE(ep.disqualified, FALSE) = FALSE
+         GROUP BY ex.stat_name
          ORDER BY total_xp DESC",
     )
     .bind(event_id)
@@ -2121,13 +2158,23 @@ pub async fn get_user_event_rank(
         event_id, user_id
     );
     sqlx::query_scalar::<_, i64>(
-        "SELECT rank FROM (
-             SELECT user_id, RANK() OVER (ORDER BY SUM(xp_earned) DESC) AS rank
-             FROM event_xp
-             WHERE event_id = $1
-             GROUP BY user_id
-         ) sub
-         WHERE user_id = $2",
+        r#"
+        SELECT rank FROM (
+            SELECT ex.user_id,
+            RANK() OVER (ORDER BY SUM(ex.xp_earned) DESC, ex.user_id ASC)
+            FROM event_xp ex
+            JOIN users u ON u.id = ex.user_id
+            LEFT JOIN event_participants ep
+                ON ep.event_id = ex.event_id
+                AND ep.user_id = ex.user_id
+            WHERE ex.event_id = $1
+                AND u.active = TRUE
+                AND (u.event_ban_until IS NULL OR u.event_ban_until < NOW())
+                AND COALESCE(ep.disqualified, FALSE) = FALSE
+            GROUP BY ex.user_id
+        ) sub
+        WHERE user_id = $2
+        "#,
     )
     .bind(event_id)
     .bind(user_id)
@@ -2191,6 +2238,89 @@ pub async fn mark_user_active(
     Ok(())
 }
 
+pub async fn disqualify_user_from_event(
+    pool: &PgPool,
+    event_id: i64,
+    user_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        INSERT INTO event_participants (event_id, user_id, disqualified)
+        VALUES ($1, $2, TRUE)
+        ON CONFLICT (event_id, user_id)
+        DO UPDATE SET disqualified = TRUE
+        "#,
+        event_id,
+        user_id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn requalify_user_for_event(
+    pool: &PgPool,
+    event_id: i64,
+    user_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        UPDATE event_participants
+        SET disqualified = FALSE
+        WHERE event_id = $1
+          AND user_id = $2
+        "#,
+        event_id,
+        user_id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn ban_user_from_events(
+    pool: &PgPool,
+    user_id: i64,
+    duration_days: i64,
+    reason: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let ban_until = chrono::Utc::now() + chrono::Duration::days(duration_days);
+
+    sqlx::query!(
+        r#"
+        UPDATE users
+        SET event_ban_until = $1,
+            event_ban_reason = $2
+        WHERE id = $3
+        "#,
+        ban_until,
+        reason,
+        user_id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn unban_user_from_events(pool: &PgPool, user_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        UPDATE users
+        SET event_ban_until = NULL,
+            event_ban_reason = NULL
+        WHERE id = $1
+        "#,
+        user_id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 // =========================================================================
 // persistent_event_leaderboards
 // =========================================================================
@@ -2199,10 +2329,16 @@ pub async fn mark_user_active(
 pub async fn count_event_participants(pool: &PgPool, event_id: i64) -> Result<i64, sqlx::Error> {
     debug!("queries::count_event_participants: event_id={}", event_id);
     let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(DISTINCT u.id)
-         FROM event_xp ex
-         JOIN users u ON u.id = ex.user_id
-         WHERE ex.event_id = $1 AND u.active = TRUE",
+        "SELECT COUNT(DISTINCT ex.user_id)
+        FROM event_xp ex
+        JOIN users u ON u.id = ex.user_id
+        LEFT JOIN event_participants ep
+            ON ep.event_id = ex.event_id
+           AND ep.user_id = ex.user_id
+        WHERE ex.event_id = $1
+          AND u.active = TRUE
+          AND (u.event_ban_until IS NULL OR u.event_ban_until < NOW())
+          AND COALESCE(ep.disqualified, FALSE) = FALSE",
     )
     .bind(event_id)
     .fetch_one(pool)
@@ -2468,11 +2604,28 @@ async fn process_batch(
         let xp_earned = es.xp_per_unit * units as f64;
 
         let row: Option<(f64,)> = sqlx::query_as(
-            "INSERT INTO event_xp
+            r#"
+            INSERT INTO event_xp
                  (event_id, user_id, stat_name, delta_id, units, xp_per_unit, xp_earned, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-             ON CONFLICT (event_id, delta_id) DO NOTHING
-             RETURNING xp_earned",
+            SELECT $1 AS event_id,
+                   $2 AS user_id,
+                   $3 AS stat_name,
+                   $4 AS delta_id,
+                   $5 AS units,
+                   $6 AS xp_per_unit,
+                   $7 AS xp_earned,
+                   NOW() AS created_at
+            FROM users u
+            LEFT JOIN event_participants ep
+                   ON ep.event_id = $1
+                  AND ep.user_id = u.id
+            WHERE u.id = $2
+              AND u.active = TRUE
+              AND (u.event_ban_until IS NULL OR u.event_ban_until < NOW())
+              AND COALESCE(ep.disqualified, FALSE) = FALSE
+            ON CONFLICT (event_id, delta_id) DO NOTHING
+            RETURNING xp_earned
+            "#,
         )
         .bind(event_id)
         .bind(delta.user_id)
@@ -3001,18 +3154,35 @@ pub async fn get_event_statistics(
     debug!("queries::get_event_statistics: event_id={}", event_id);
 
     // Total XP earned within this event.
-    let (total_xp,): (f64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(xp_earned), 0) FROM event_xp WHERE event_id = $1")
-            .bind(event_id)
-            .fetch_one(pool)
-            .await?;
+    let (total_xp,): (f64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(ex.xp_earned)::DOUBLE PRECISION, 0.0)
+         FROM event_xp ex
+         JOIN users u ON u.id = ex.user_id
+         LEFT JOIN event_participants ep
+           ON ep.event_id = ex.event_id
+          AND ep.user_id = ex.user_id
+         WHERE ex.event_id = $1
+           AND u.active = TRUE
+           AND (u.event_ban_until IS NULL OR u.event_ban_until < NOW())
+           AND COALESCE(ep.disqualified, FALSE) = FALSE",
+    )
+    .bind(event_id)
+    .fetch_one(pool)
+    .await?;
 
     // Per-stat unit totals for this event.
     let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT stat_name, COALESCE(SUM(units)::bigint, 0) AS total
-         FROM event_xp
-         WHERE event_id = $1
-         GROUP BY stat_name
+        "SELECT ex.stat_name, COALESCE(SUM(ex.units)::bigint, 0) AS total
+         FROM event_xp ex
+         JOIN users u ON u.id = ex.user_id
+         LEFT JOIN event_participants ep
+           ON ep.event_id = ex.event_id
+          AND ep.user_id = ex.user_id
+         WHERE ex.event_id = $1
+           AND u.active = TRUE
+           AND (u.event_ban_until IS NULL OR u.event_ban_until < NOW())
+           AND COALESCE(ep.disqualified, FALSE) = FALSE
+         GROUP BY ex.stat_name
          ORDER BY total DESC",
     )
     .bind(event_id)
@@ -3047,4 +3217,23 @@ pub async fn get_event_statistics(
         participants: Some(participants),
         other_stat_changes,
     })
+}
+
+pub async fn get_event_participant_for_active_event(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Option<DbEventParticipant>, sqlx::Error> {
+    sqlx::query_as::<_, DbEventParticipant>(
+        r#"
+        SELECT ep.*
+        FROM event_participants ep
+        JOIN events e ON e.id = ep.event_id
+        WHERE ep.user_id = $1
+          AND e.status = 'active'
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
 }

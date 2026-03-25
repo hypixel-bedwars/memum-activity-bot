@@ -431,26 +431,38 @@ async fn apply_stat_deltas(
 
     // Award event XP for each committed delta (post-commit, pool-only).
     let mut total_event_xp = 0.0_f64;
-    for (stat_name, delta_id, difference) in &committed_deltas {
-        match queries::award_event_xp_for_delta(
-            pool,
-            user.guild_id,
-            user.id,
-            stat_name,
-            *delta_id,
-            *difference,
-            now,
-        )
-        .await
-        {
-            Ok(xp) => total_event_xp += xp,
-            Err(e) => {
-                warn!(
-                    user_id = user.id,
-                    stat_name,
-                    error = %e,
-                    "Failed to award event XP for delta."
-                );
+    let participant = queries::get_event_participant_for_active_event(pool, user.id).await?;
+
+    let can_participate =
+        crate::database::models::can_user_participate_in_event(user, participant.as_ref());
+
+    if !can_participate {
+        debug!(
+            user_id = user.id,
+            "Skipping event XP — user is disqualified or globally banned."
+        );
+    } else {
+        for (stat_name, delta_id, difference) in &committed_deltas {
+            match queries::award_event_xp_for_delta(
+                pool,
+                user.guild_id,
+                user.id,
+                stat_name,
+                *delta_id,
+                *difference,
+                now,
+            )
+            .await
+            {
+                Ok(xp) => total_event_xp += xp,
+                Err(e) => {
+                    warn!(
+                        user_id = user.id,
+                        stat_name,
+                        error = %e,
+                        "Failed to award event XP for delta."
+                    );
+                }
             }
         }
     }

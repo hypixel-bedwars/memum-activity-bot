@@ -40,6 +40,7 @@ pub fn all() -> Vec<poise::Command<Data, Error>> {
         admin::recalculate_xp::recalculate_xp(),
         admin::edit_events::edit_event(),
         admin::audit_users::audit_users(),
+        admin::disqualify::disqualify(),
         events::events::event(),
         leaderboard::leaderboard::leaderboard(),
         leaderboard::leaderboard_create::leaderboard_create(),
