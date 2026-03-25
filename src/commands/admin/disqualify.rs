@@ -1,3 +1,4 @@
+use ::serenity::all::ChannelId;
 use chrono::{Duration, Utc};
 use poise::serenity_prelude::{self as serenity, CreateEmbed};
 use tracing::info;
@@ -5,6 +6,8 @@ use tracing::info;
 use crate::commands::logger::logger::{LogType, logger};
 use crate::database::queries;
 use crate::shared::types::{Context, Error};
+
+const LOG_CHANNEL: u64 = 1486217374309941308;
 
 async fn autocomplete_event_name<'a>(
     ctx: Context<'_>,
@@ -40,7 +43,7 @@ pub async fn disqualify(
     ctx: Context<'_>,
     user: serenity::User,
     duration: Option<i64>,
-    event: Option<i64>,
+    #[autocomplete = "autocomplete_event_name"] event: Option<i64>,
     reason: Option<String>,
 ) -> Result<(), Error> {
     let guild_id = ctx
@@ -112,6 +115,28 @@ pub async fn disqualify(
             ),
         )
         .await?;
+
+        let embed = CreateEmbed::new()
+            .title("⚠️ Global Disqualification")
+            .color(0xFFA500)
+            .fields(vec![
+                ("User", format!("<@{}>", user.id), true),
+                ("Moderator", ctx.author().name.clone(), true),
+                ("Duration", days.to_string(), true),
+                (
+                    "Reason",
+                    reason
+                        .as_deref()
+                        .unwrap_or("No reason provided.")
+                        .to_string(),
+                    false,
+                ),
+            ])
+            .timestamp(chrono::Utc::now());
+
+        ChannelId::new(LOG_CHANNEL)
+            .send_message(&ctx.http(), serenity::CreateMessage::new().embed(embed))
+            .await?;
     } else if let Some(event_id) = event {
         let event_row = queries::get_event_by_id(pool, event_id)
             .await?
@@ -164,6 +189,28 @@ pub async fn disqualify(
             ),
         )
         .await?;
+
+        let embed = CreateEmbed::new()
+            .title("⚠️ Event Disqualification")
+            .color(0xFFA500)
+            .fields(vec![
+                ("User", format!("<@{}>", user.id), true),
+                ("Moderator", ctx.author().name.clone(), true),
+                ("Event", event_row.name.clone(), true),
+                (
+                    "Reason",
+                    reason
+                        .as_deref()
+                        .unwrap_or("No reason provided.")
+                        .to_string(),
+                    false,
+                ),
+            ])
+            .timestamp(chrono::Utc::now());
+
+        ChannelId::new(LOG_CHANNEL)
+            .send_message(&ctx.http(), serenity::CreateMessage::new().embed(embed))
+            .await?;
     }
 
     Ok(())
@@ -225,6 +272,26 @@ pub async fn undisqualify(
         format!("{} undisqualified <@{}>", ctx.author().name, user.id),
     )
     .await?;
+
+    let embed = CreateEmbed::new()
+        .title("⚠️ Disqualification Removed")
+        .color(0x00FF00)
+        .fields(vec![
+            ("User", format!("<@{}>", user.id), true),
+            ("Moderator", ctx.author().name.clone(), true),
+            (
+                "Event",
+                event
+                    .map(|id| id.to_string())
+                    .unwrap_or("Global Ban".to_string()),
+                true,
+            ),
+        ])
+        .timestamp(chrono::Utc::now());
+
+    ChannelId::new(LOG_CHANNEL)
+        .send_message(&ctx.http(), serenity::CreateMessage::new().embed(embed))
+        .await?;
 
     Ok(())
 }
