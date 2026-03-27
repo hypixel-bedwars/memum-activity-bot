@@ -271,7 +271,7 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
             cursor_x += font.measure_text(&level_str, scale);
 
             // xp
-            let xp_str = format!(" ({}xp)", format_xp(row.total_xp));
+            let xp_str = format!(" ({})", format_xp(row.total_xp));
             font.render_formatted_shadowed(&mut img, cursor_x, y, &xp_str, scale, MUTED);
         } else {
             // event mode: show only XP, no level
