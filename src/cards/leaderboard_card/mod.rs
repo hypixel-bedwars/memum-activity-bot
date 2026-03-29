@@ -49,10 +49,10 @@ const CORNER_R: u32 = 12;
 /// Height of the milestone section header row (title + divider).
 const MILESTONE_SECTION_HEADER_H: u32 = 48;
 /// Height per individual milestone entry row.
-const MILESTONE_ROW_H: u32 = 40;
+const MILESTONE_ROW_H: u32 = 50;
 /// Padding below the last milestone row before the image edge.
-const MILESTONE_BOTTOM_PAD: u32 = 16;
-const MILESTONE_HEADER_GAP: u32 = 30;
+const MILESTONE_BOTTOM_PAD: u32 = 40;
+const MILESTONE_HEADER_GAP: u32 = 80;
 
 /// Extra vertical space reserved at the top when a card title is present.
 const TITLE_H: u32 = 50;
@@ -317,45 +317,50 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
     );
 
     let font = FontRenderer::get();
+    let scale = 5;
 
-    // Height: header + one row per milestone + bottom padding.
-    // Minimum 200 px so an empty card still looks intentional.
-    let content_h = (params.milestones.len() as u32).max(1) * MILESTONE_ROW_H + 40;
-    let img_h = content_h.max(200);
+    // Calculate dynamic height: Header + (Rows * RowH) + Bottom Padding
+    let rows_count = (params.milestones.len() as u32).max(1);
+    let img_h = MILESTONE_HEADER_GAP + (rows_count * MILESTONE_ROW_H) + MILESTONE_BOTTOM_PAD;
+    let img_h = img_h.max(300);
 
     let mut img = RgbaImage::from_pixel(IMG_W, img_h, BG);
 
-    // Total users right-aligned
     let users_text = format!("{} registered players", params.total_users);
-    let users_w = font.measure_text(&users_text, 2);
+    let users_w = font.measure_text(&users_text, scale);
     let users_x = (IMG_W - MARGIN * 2).saturating_sub(20 + users_w) + MARGIN;
-    font.render_text(&mut img, users_x, MARGIN + 10, &users_text, 2, MUTED);
+    font.render_text(
+        &mut img,
+        users_x,
+        MARGIN + 10,
+        &users_text,
+        scale - 1,
+        MUTED,
+    );
 
     // == MILESTONE ROWS =======================================================
     if params.milestones.is_empty() {
-        let msg = "No milestones configured for this server.";
-        let msg_w = font.measure_text(msg, 2);
+        let msg = "No milestones configured.";
+        let msg_w = font.measure_text(msg, scale);
         let cx = (IMG_W - msg_w) / 2;
-        font.render_text(
-            &mut img,
-            cx,
-            MARGIN + MILESTONE_SECTION_HEADER_H + 10,
-            msg,
-            3,
-            MUTED,
-        );
+        font.render_text(&mut img, cx, MILESTONE_HEADER_GAP + 20, msg, scale, MUTED);
     } else {
-        let first_row_y = MARGIN + 20;
         for (i, milestone) in params.milestones.iter().enumerate() {
-            let row_y = first_row_y + (i as u32) * MILESTONE_ROW_H;
+            let row_y = MILESTONE_HEADER_GAP + (i as u32) * MILESTONE_ROW_H;
 
-            // Level badge
             let level_text = format!("Level {}", milestone.level);
-            font.render_text(&mut img, MARGIN + 20, row_y + 8, &level_text, 3, GOLD);
+            font.render_text(
+                &mut img,
+                MARGIN + 20,
+                row_y + (MILESTONE_ROW_H / 2) - 20,
+                &level_text,
+                scale - 1,
+                GOLD,
+            );
 
-            // User count
+            // User count (Centered in row)
             let count_text = format!(
-                "{} player{} reached this milestone",
+                "{} player{} reached this",
                 milestone.user_count,
                 if milestone.user_count == 1 {
                     " has"
@@ -363,12 +368,13 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
                     "s have"
                 },
             );
+
             font.render_text(
                 &mut img,
-                MARGIN + 220,
-                row_y + (MILESTONE_ROW_H / 2) - 12,
+                MARGIN + 270, // Adjusted X offset for Level text width
+                row_y + (MILESTONE_ROW_H / 2) - 20,
                 &count_text,
-                3,
+                scale - 1,
                 WHITE,
             );
         }
@@ -379,6 +385,7 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
     DynamicImage::ImageRgba8(img)
         .write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
         .expect("PNG encoding should not fail");
+
     debug!(
         "leaderboard_card::render_milestone_card: finished encoding PNG (bytes={})",
         buf.len()
@@ -421,52 +428,65 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
     );
 
     let font = FontRenderer::get();
+    let scale = 5;
 
-    let content_h = (params.milestones.len() as u32).max(1) * MILESTONE_ROW_H + 60;
-    let img_h = content_h.max(200);
+    // Calculate dynamic height
+    // Header space + (number of rows * row height) + bottom padding
+    let rows_count = (params.milestones.len() as u32).max(1);
+    let img_h = MILESTONE_HEADER_GAP + (rows_count * MILESTONE_ROW_H) + MILESTONE_BOTTOM_PAD;
+    let img_h = img_h.max(300); // Minimum height to look good
 
     let mut img = RgbaImage::from_pixel(IMG_W, img_h, BG);
 
-    // Event name title (top-left)
     font.render_text(
         &mut img,
         MARGIN + 20,
-        MARGIN + 8,
+        MARGIN + 10,
         &params.event_name,
-        3,
+        scale,
         CYAN,
     );
 
-    // Total participants right-aligned
     let users_text = format!("{} participants", params.total_participants);
-    let users_w = font.measure_text(&users_text, 2);
+    let users_w = font.measure_text(&users_text, scale);
     let users_x = (IMG_W - MARGIN * 2).saturating_sub(20 + users_w) + MARGIN;
-    font.render_text(&mut img, users_x, MARGIN + 10, &users_text, 2, MUTED);
+    font.render_text(&mut img, users_x, MARGIN + 10, &users_text, scale, MUTED);
 
     if params.milestones.is_empty() {
-        let msg = "No milestones configured for this event.";
-        let msg_w = font.measure_text(msg, 2);
+        let msg = "No milestones configured.";
+        let msg_w = font.measure_text(msg, scale);
         let cx = (IMG_W - msg_w) / 2;
-        font.render_text(
-            &mut img,
-            cx,
-            MARGIN + MILESTONE_SECTION_HEADER_H + 10,
-            msg,
-            3,
-            MUTED,
-        );
+        font.render_text(&mut img, cx, MILESTONE_HEADER_GAP + 20, msg, scale, MUTED);
     } else {
-        let first_row_y = MARGIN + 40;
         for (i, milestone) in params.milestones.iter().enumerate() {
-            let row_y = first_row_y + (i as u32) * MILESTONE_ROW_H;
+            let row_y = MILESTONE_HEADER_GAP + (i as u32) * MILESTONE_ROW_H;
 
-            // XP threshold badge
+            // Optional: Draw a subtle separator line between rows
+            if i > 0 {
+                fill_rect(
+                    &mut img,
+                    MARGIN + 20,
+                    row_y,
+                    IMG_W - (MARGIN * 2) - 40,
+                    2,
+                    DIVIDER,
+                );
+            }
+
+            // XP threshold badge (Vertically centered: row_y + half height - half font size)
             let threshold_text = format!("{} XP", format_xp(milestone.xp_threshold));
-            font.render_text(&mut img, MARGIN + 20, row_y + 8, &threshold_text, 3, GOLD);
+            font.render_text(
+                &mut img,
+                MARGIN + 20,
+                row_y + (MILESTONE_ROW_H / 2) - 20,
+                &threshold_text,
+                3,
+                GOLD,
+            );
 
-            // User count
+            // User count (Vertically centered)
             let count_text = format!(
-                "{} player{} reached this milestone",
+                "{} player{} reached this",
                 milestone.user_count,
                 if milestone.user_count == 1 {
                     " has"
@@ -474,25 +494,23 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
                     "s have"
                 },
             );
+
             font.render_text(
                 &mut img,
-                MARGIN + 220,
-                row_y + (MILESTONE_ROW_H / 2) - 12,
+                MARGIN + 350, // Pushed right to clear the XP text
+                row_y + (MILESTONE_ROW_H / 2) - 20,
                 &count_text,
-                3,
+                scale,
                 WHITE,
             );
         }
     }
 
+    // Encode PNG
     let mut buf: Vec<u8> = Vec::new();
     DynamicImage::ImageRgba8(img)
         .write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
         .expect("PNG encoding should not fail");
-    debug!(
-        "leaderboard_card::render_event_milestone_card: finished encoding PNG (bytes={})",
-        buf.len()
-    );
     buf
 }
 
