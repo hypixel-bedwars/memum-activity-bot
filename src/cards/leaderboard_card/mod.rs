@@ -468,18 +468,6 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
         for (i, milestone) in params.milestones.iter().enumerate() {
             let row_y = MILESTONE_HEADER_GAP + (i as u32) * MILESTONE_ROW_H;
 
-            // Optional: Draw a subtle separator line between rows
-            if i > 0 {
-                fill_rect(
-                    &mut img,
-                    MARGIN + 20,
-                    row_y,
-                    IMG_W - (MARGIN * 2) - 40,
-                    2,
-                    DIVIDER,
-                );
-            }
-
             // XP threshold badge (Vertically centered: row_y + half height - half font size)
             let threshold_text = format!("{} XP", format_xp(milestone.xp_threshold));
             font.render_text(
