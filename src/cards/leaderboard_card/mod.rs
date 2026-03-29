@@ -450,7 +450,14 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
     let users_text = format!("{} participants", params.total_participants);
     let users_w = font.measure_text(&users_text, scale);
     let users_x = (IMG_W - MARGIN * 2).saturating_sub(20 + users_w) + MARGIN;
-    font.render_text(&mut img, users_x, MARGIN + 10, &users_text, scale, MUTED);
+    font.render_text(
+        &mut img,
+        users_x - 20,
+        MARGIN + 10,
+        &users_text,
+        scale - 2,
+        MUTED,
+    );
 
     if params.milestones.is_empty() {
         let msg = "No milestones configured.";
@@ -480,7 +487,7 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
                 MARGIN + 20,
                 row_y + (MILESTONE_ROW_H / 2) - 20,
                 &threshold_text,
-                3,
+                4,
                 GOLD,
             );
 
@@ -497,10 +504,10 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
 
             font.render_text(
                 &mut img,
-                MARGIN + 350, // Pushed right to clear the XP text
+                MARGIN + 280, // Pushed right to clear the XP text
                 row_y + (MILESTONE_ROW_H / 2) - 20,
                 &count_text,
-                scale,
+                scale - 1,
                 WHITE,
             );
         }
