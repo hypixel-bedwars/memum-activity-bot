@@ -329,7 +329,7 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
     let users_text = format!("{} registered players", params.total_users);
     let users_w = font.measure_text(&users_text, scale);
     let users_x = (IMG_W - MARGIN * 2).saturating_sub(20 + users_w) + MARGIN;
-    font.render_text(
+    font.render_formatted_shadowed(
         &mut img,
         users_x,
         MARGIN + 10,
@@ -349,7 +349,7 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
             let row_y = MILESTONE_HEADER_GAP + (i as u32) * MILESTONE_ROW_H;
 
             let level_text = format!("Level {}", milestone.level);
-            font.render_text(
+            font.render_formatted_shadowed(
                 &mut img,
                 MARGIN + 20,
                 row_y + (MILESTONE_ROW_H / 2) - 20,
@@ -369,7 +369,7 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
                 },
             );
 
-            font.render_text(
+            font.render_formatted_shadowed(
                 &mut img,
                 MARGIN + 270, // Adjusted X offset for Level text width
                 row_y + (MILESTONE_ROW_H / 2) - 20,
@@ -438,7 +438,7 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
 
     let mut img = RgbaImage::from_pixel(IMG_W, img_h, BG);
 
-    font.render_text(
+    font.render_formatted_shadowed(
         &mut img,
         MARGIN + 20,
         MARGIN + 10,
@@ -450,7 +450,7 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
     let users_text = format!("{} participants", params.total_participants);
     let users_w = font.measure_text(&users_text, scale);
     let users_x = (IMG_W - MARGIN * 2).saturating_sub(20 + users_w) + MARGIN;
-    font.render_text(
+    font.render_formatted_shadowed(
         &mut img,
         users_x - 20,
         MARGIN + 10,
@@ -463,14 +463,14 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
         let msg = "No milestones configured.";
         let msg_w = font.measure_text(msg, scale);
         let cx = (IMG_W - msg_w) / 2;
-        font.render_text(&mut img, cx, MILESTONE_HEADER_GAP + 20, msg, scale, MUTED);
+        font.render_formatted_shadowed(&mut img, cx, MILESTONE_HEADER_GAP + 20, msg, scale, MUTED);
     } else {
         for (i, milestone) in params.milestones.iter().enumerate() {
             let row_y = MILESTONE_HEADER_GAP + (i as u32) * MILESTONE_ROW_H;
 
             // XP threshold badge (Vertically centered: row_y + half height - half font size)
             let threshold_text = format!("{} XP", format_xp(milestone.xp_threshold));
-            font.render_text(
+            font.render_formatted_shadowed(
                 &mut img,
                 MARGIN + 20,
                 row_y + (MILESTONE_ROW_H / 2) - 20,
@@ -490,7 +490,7 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
                 },
             );
 
-            font.render_text(
+            font.render_formatted_shadowed(
                 &mut img,
                 MARGIN + 280, // Pushed right to clear the XP text
                 row_y + (MILESTONE_ROW_H / 2) - 20,
