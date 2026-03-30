@@ -84,7 +84,11 @@ pub async fn stats(
     };
 
     let thumbnail_url = if let Some(tex) = &db_user.head_texture {
-        tex.clone()
+        if tex.starts_with("http://") || tex.starts_with("https://") {
+            tex.clone()
+        } else {
+            format!("https://minotar.net/avatar/{}/80", db_user.minecraft_uuid)
+        }
     } else {
         format!("https://minotar.net/avatar/{}/80", db_user.minecraft_uuid)
     };
