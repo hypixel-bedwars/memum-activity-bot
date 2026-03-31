@@ -354,7 +354,7 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
                 MARGIN + 20,
                 row_y + (MILESTONE_ROW_H / 2) - 20,
                 &level_text,
-                scale - 1,
+                scale,
                 GOLD,
             );
 
@@ -374,7 +374,7 @@ pub fn render_milestone_card(params: &MilestoneCardParams) -> Vec<u8> {
                 MARGIN + 270, // Adjusted X offset for Level text width
                 row_y + (MILESTONE_ROW_H / 2) - 20,
                 &count_text,
-                scale - 1,
+                scale,
                 WHITE,
             );
         }
@@ -438,15 +438,6 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
 
     let mut img = RgbaImage::from_pixel(IMG_W, img_h, BG);
 
-    font.render_formatted_shadowed(
-        &mut img,
-        MARGIN + 20,
-        MARGIN + 10,
-        &params.event_name,
-        scale,
-        CYAN,
-    );
-
     let users_text = format!("{} participants", params.total_participants);
     let users_w = font.measure_text(&users_text, scale);
     let users_x = (IMG_W - MARGIN * 2).saturating_sub(20 + users_w) + MARGIN;
@@ -475,7 +466,7 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
                 MARGIN + 20,
                 row_y + (MILESTONE_ROW_H / 2) - 20,
                 &threshold_text,
-                4,
+                5,
                 GOLD,
             );
 
@@ -495,7 +486,7 @@ pub fn render_event_milestone_card(params: &EventMilestoneCardParams) -> Vec<u8>
                 MARGIN + 280, // Pushed right to clear the XP text
                 row_y + (MILESTONE_ROW_H / 2) - 20,
                 &count_text,
-                scale - 1,
+                scale,
                 WHITE,
             );
         }
