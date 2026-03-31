@@ -27,6 +27,7 @@ use crate::cards::statistics::{self as statistics_card, StatisticsCardParams};
 use crate::commands::leaderboard::helpers as lb_helpers;
 use crate::database::queries;
 use crate::shared::types::{Context, Error};
+use crate::sweeper;
 use crate::utils::stats_definitions::display_name_for_key;
 
 // ========================================================
@@ -278,6 +279,30 @@ pub async fn level(
     let target = user.as_ref().unwrap_or_else(|| ctx.author());
     let user_id = target.id.get() as i64;
     let author_name = ctx.author().name.clone();
+    let data = ctx.data();
+
+    let db_user = queries::get_user_by_discord_id(&data.db, user_id, guild_id).await?;
+
+    let db_user = match db_user {
+        Some(u) => u,
+        None => {
+            let embed = CreateEmbed::default()
+                .title("Not Registered")
+                .color(0xFF4444)
+                .description(format!(
+                    "**{}** is not registered. Please go to the signup channel and use the button",
+                    target.name
+                ));
+            ctx.send(poise::CreateReply::default().embed(embed)).await?;
+            return Ok(());
+        }
+    };
+
+    // on-demand Hypixel refresh
+    // Stamps last_command_activity and refreshes Hypixel stats if the cooldown
+    // has elapsed.  The command already deferred above so Discord's "thinking…"
+    // indicator covers any API latency.
+    sweeper::hypixel_sweeper::refresh_hypixel_user(data, &db_user).await;
 
     // Resolve event name
     let event_name = match event_name {
