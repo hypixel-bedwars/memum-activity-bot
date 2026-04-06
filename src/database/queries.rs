@@ -3734,3 +3734,26 @@ pub async fn remove_event_message_requirement_positions(
 
     Ok(rows.into_iter().map(|r| r.id).collect())
 }
+
+pub async fn get_requirement_for_position(
+    pool: &PgPool,
+    event_id: i64,
+    position: i32,
+) -> Result<Option<EventMessageRequirementDetail>, sqlx::Error> {
+    let requirements = sqlx::query_as!(
+        EventMessageRequirementDetail,
+        r#"
+        SELECT id, event_id, min_messages, positions as "positions!", created_at
+        FROM event_message_requirements
+        WHERE event_id = $1
+        ORDER BY min_messages DESC, id
+        "#,
+        event_id
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(requirements
+        .into_iter()
+        .find(|req| req.positions.contains(&position)))
+}

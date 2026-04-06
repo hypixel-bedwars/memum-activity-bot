@@ -387,6 +387,12 @@ pub async fn level(
 
     let is_disqualified = event_dq;
 
+    let event_messages =
+        queries::get_event_user_message_count(&ctx.data().db, event.id, db_user.id).await?;
+    let min_message =
+        queries::get_requirement_for_position(&ctx.data().db, event.id, rank.unwrap_or(0) as i32)
+            .await?;
+
     // Build card params — reuse the level card with event-specific data:
     //   level             = 0   (not applicable for events; hides level display)
     //   xp_this_level     = 0.0 (progress bar will be empty)
@@ -410,8 +416,8 @@ pub async fn level(
         hypixel_rank_plus_color: db_user.hypixel_rank_plus_color.clone(),
         event_mode: true,
         is_disqualified,
-        message_count: None,
-        required_messages: None,
+        message_count: Some(event_messages),
+        required_messages: (min_message.map(|req| req.min_messages)),
         event_milestones: vec![],
         current_xp: total_xp,
     };
