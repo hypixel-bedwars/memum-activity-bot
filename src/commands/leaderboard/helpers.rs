@@ -193,10 +193,15 @@ pub async fn generate_event_leaderboard_page(
                 .unwrap_or_else(|| format!("User#{}", entry.discord_user_id));
 
             // Map RequirementStatus to Option<bool>
-            // None = no requirement exists for this position
-            // Some(true) = requirement exists and is met
-            // Some(false) = requirement exists but is not met
-            let requirement_met = requirement_status.map(|status| status.is_completed);
+            // Only set Some(false) when requirement exists and is NOT met (shows red dot)
+            // Otherwise None (no dot shown)
+            let requirement_met = requirement_status.and_then(|status| {
+                if !status.is_completed {
+                    Some(false) // Requirement not met - show red dot
+                } else {
+                    None // Requirement met or no requirement - no dot
+                }
+            });
 
             LeaderboardRow {
                 rank,

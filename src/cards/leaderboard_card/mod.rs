@@ -32,8 +32,7 @@ const DIVIDER: Rgba<u8> = Rgba([0x30, 0x30, 0x50, 0xff]);
 const HEADER_BG: Rgba<u8> = Rgba([0x16, 0x16, 0x28, 0xff]);
 const RANK_GREEN: Rgba<u8> = Rgba([0x55, 0xff, 0x55, 0xff]);
 const LIGHT_BLUE: Rgba<u8> = Rgba([0x55, 0xff, 0xff, 0xff]);
-const STATUS_GREEN: Rgba<u8> = Rgba([0x55, 0xff, 0x55, 0xff]);
-const STATUS_RED: Rgba<u8> = Rgba([0xff, 0x55, 0x55, 0xff]);
+const STATUS_RED: Rgba<u8> = Rgba([0xff, 0x55, 0x55, 0xff]); // Red dot for unmet requirements
 
 // ---------------------------------------------------------------------------
 // Image dimensions
@@ -265,14 +264,13 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         cursor_x += font.measure_text(&row.username, scale);
 
         if !params.show_level {
-            if let Some(status) = row.requirement_met {
-                let dot_color = if status { STATUS_GREEN } else { STATUS_RED };
-
+            // Only show red dot when requirement is not met
+            if row.requirement_met == Some(false) {
                 let dot_radius = 4;
                 let dot_x = cursor_x + 10; // spacing after username
                 let dot_y = y + 10; // vertical alignment tweak
 
-                draw_circle(&mut img, dot_x, dot_y, dot_radius, dot_color);
+                draw_circle(&mut img, dot_x, dot_y, dot_radius, STATUS_RED);
 
                 cursor_x += 20; // spacing after dot
             }
