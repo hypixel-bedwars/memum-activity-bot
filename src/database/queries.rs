@@ -2107,6 +2107,31 @@ pub async fn get_user_event_stats(
         "queries::get_user_event_stats: event_id={}, user_id={}",
         event_id, user_id
     );
+
+    // First, test without is_player_allowed to see if that's the issue
+    let test_rows = sqlx::query_as::<_, (String, f64, i64)>(
+        "SELECT ex.stat_name, COALESCE(SUM(ex.xp_earned), 0.0) AS total_xp, COALESCE(SUM(ex.units), 0)::BIGINT AS total_units
+         FROM event_xp ex
+         JOIN users u ON u.id = ex.user_id
+         WHERE ex.event_id = $1
+            AND ex.user_id = $2
+            AND u.active = TRUE
+         GROUP BY ex.stat_name
+         ORDER BY total_xp DESC",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+
+    info!(
+        "queries::get_user_event_stats (WITHOUT is_player_allowed): event_id={}, user_id={}, rows_returned={}, stats={:?}",
+        event_id,
+        user_id,
+        test_rows.len(),
+        test_rows
+    );
+
     let rows = sqlx::query_as::<_, (String, f64, i64)>(
         "SELECT ex.stat_name, COALESCE(SUM(ex.xp_earned), 0.0) AS total_xp, COALESCE(SUM(ex.units), 0)::BIGINT AS total_units
          FROM event_xp ex
@@ -2122,6 +2147,15 @@ pub async fn get_user_event_stats(
     .bind(user_id)
     .fetch_all(pool)
     .await?;
+
+    info!(
+        "queries::get_user_event_stats (WITH is_player_allowed): event_id={}, user_id={}, rows_returned={}, stats={:?}",
+        event_id,
+        user_id,
+        rows.len(),
+        rows
+    );
+
     Ok(rows)
 }
 
