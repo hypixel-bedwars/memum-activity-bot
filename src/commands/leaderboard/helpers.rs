@@ -147,61 +147,16 @@ pub async fn generate_event_leaderboard_page(
 
     let avatars = futures::future::join_all(avatar_futures).await;
 
-    // Fetch message counts for all users concurrently
-    let message_count_futures: Vec<_> = entries
-        .iter()
-        .map(|entry| {
-            let user_id = entry.discord_user_id;
-            async move {
-                queries::get_event_user_message_count(pool, event_id, user_id)
-                    .await
-                    .unwrap_or(0)
-            }
-        })
-        .collect();
-
-    let message_counts = futures::future::join_all(message_count_futures).await;
-
-    // Check requirements for all users concurrently
-    let requirement_futures: Vec<_> = entries
-        .iter()
-        .enumerate()
-        .zip(message_counts.iter())
-        .map(|((i, _entry), &message_count)| {
-            let rank = offset as i32 + i as i32 + 1;
-            async move {
-                queries::check_requirement_for_position(pool, event_id, rank, message_count)
-                    .await
-                    .ok()
-                    .flatten() // Flatten Option<Option<RequirementStatus>> to Option<RequirementStatus>
-            }
-        })
-        .collect();
-
-    let requirement_statuses = futures::future::join_all(requirement_futures).await;
-
     let rows: Vec<LeaderboardRow> = entries
         .iter()
         .zip(avatars.into_iter())
-        .zip(requirement_statuses.into_iter())
         .enumerate()
-        .map(|(i, ((entry, avatar), requirement_status))| {
+        .map(|(i, (entry, avatar))| {
             let rank = offset as u32 + i as u32 + 1;
             let username = entry
                 .minecraft_username
                 .clone()
                 .unwrap_or_else(|| format!("User#{}", entry.discord_user_id));
-
-            // Map RequirementStatus to Option<bool>
-            // Only set Some(false) when requirement exists and is NOT met (shows red dot)
-            // Otherwise None (no dot shown)
-            let requirement_met = requirement_status.and_then(|status| {
-                if !status.is_completed {
-                    Some(false) // Requirement not met - show red dot
-                } else {
-                    None // Requirement met or no requirement - no dot
-                }
-            });
 
             LeaderboardRow {
                 rank,
@@ -212,7 +167,7 @@ pub async fn generate_event_leaderboard_page(
                 avatar_bytes: avatar,
                 hypixel_rank: entry.hypixel_rank.clone(),
                 hypixel_rank_plus_color: entry.hypixel_rank_plus_color.clone(),
-                requirement_met,
+                requirement_met: None, // Not used for now
             }
         })
         .collect();

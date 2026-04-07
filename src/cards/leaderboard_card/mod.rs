@@ -32,7 +32,6 @@ const DIVIDER: Rgba<u8> = Rgba([0x30, 0x30, 0x50, 0xff]);
 const HEADER_BG: Rgba<u8> = Rgba([0x16, 0x16, 0x28, 0xff]);
 const RANK_GREEN: Rgba<u8> = Rgba([0x55, 0xff, 0x55, 0xff]);
 const LIGHT_BLUE: Rgba<u8> = Rgba([0x55, 0xff, 0xff, 0xff]);
-const STATUS_RED: Rgba<u8> = Rgba([0xff, 0x55, 0x55, 0xff]); // Red dot for unmet requirements
 
 // ---------------------------------------------------------------------------
 // Image dimensions
@@ -262,19 +261,6 @@ pub fn render(params: &LeaderboardCardParams) -> Vec<u8> {
         // username
         font.render_formatted_shadowed(&mut img, cursor_x, y, &row.username, scale, name_col);
         cursor_x += font.measure_text(&row.username, scale);
-
-        if !params.show_level {
-            // Only show red dot when requirement is not met
-            if row.requirement_met == Some(false) {
-                let dot_radius = 4;
-                let dot_x = cursor_x + 10; // spacing after username
-                let dot_y = y + 10; // vertical alignment tweak
-
-                draw_circle(&mut img, dot_x, dot_y, dot_radius, STATUS_RED);
-
-                cursor_x += 20; // spacing after dot
-            }
-        }
 
         // dash
         font.render_formatted(&mut img, cursor_x, y, " - ", scale, MUTED);
@@ -625,23 +611,6 @@ fn fill_rounded_rect(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, r: u32
                 let py = y + dy;
                 if px < img_w && py < img_h {
                     img.put_pixel(px, py, color);
-                }
-            }
-        }
-    }
-}
-
-fn draw_circle(img: &mut RgbaImage, cx: u32, cy: u32, r: u32, color: Rgba<u8>) {
-    let r_sq = (r * r) as i32;
-
-    for dy in -(r as i32)..=(r as i32) {
-        for dx in -(r as i32)..=(r as i32) {
-            if dx * dx + dy * dy <= r_sq {
-                let px = cx as i32 + dx;
-                let py = cy as i32 + dy;
-
-                if px >= 0 && py >= 0 && (px as u32) < img.width() && (py as u32) < img.height() {
-                    img.put_pixel(px as u32, py as u32, color);
                 }
             }
         }
