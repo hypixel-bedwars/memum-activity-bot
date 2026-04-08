@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateEmbed, EditMessage};
 use sqlx::PgPool;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::commands::leaderboard::helpers;
 use crate::database::queries;
@@ -68,7 +68,7 @@ async fn update_all_event_leaderboards(
 
     for lb in &leaderboards {
         if let Err(e) = update_single_event_leaderboard(pool, http, lb).await {
-            warn!(
+            debug!(
                 event_id = lb.event_id,
                 error = %e,
                 "Event leaderboard updater: failed to update event leaderboard, skipping."
@@ -97,7 +97,7 @@ async fn update_all_event_status_messages(
 
     for sm in &status_messages {
         if let Err(e) = update_single_event_status_message(pool, http, sm).await {
-            warn!(
+            debug!(
                 event_id = sm.event_id,
                 error = %e,
                 "Event status updater: failed to update event status message, skipping."
@@ -118,7 +118,7 @@ async fn update_single_event_leaderboard(
     let event = match queries::get_event_by_id(pool, record.event_id).await? {
         Some(e) => e,
         None => {
-            warn!(
+            debug!(
                 event_id = record.event_id,
                 "Event leaderboard updater: event not found, skipping."
             );
@@ -186,7 +186,7 @@ async fn update_single_event_leaderboard(
             .edit_message(http, serenity::MessageId::new(*msg_id), edit)
             .await
         {
-            warn!(
+            debug!(
                 event_id = record.event_id,
                 page,
                 message_id = msg_id,
@@ -220,7 +220,7 @@ async fn update_single_event_leaderboard(
             )
             .await
         {
-            warn!(
+            debug!(
                 event_id = record.event_id,
                 status_message_id = record.status_message_id,
                 error = %e,
@@ -255,7 +255,7 @@ async fn update_single_event_leaderboard(
                 // No milestones configured — nothing to update.
             }
             Err(e) => {
-                warn!(
+                debug!(
                     event_id = record.event_id,
                     error = %e,
                     "Event leaderboard updater: failed to generate milestone card."
@@ -323,7 +323,7 @@ async fn update_single_event_status_message(
         )
         .await
     {
-        warn!(
+        debug!(
             event_id = record.event_id,
             message_id = record.message_id,
             error = %e,
